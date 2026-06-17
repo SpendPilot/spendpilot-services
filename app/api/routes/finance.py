@@ -11,6 +11,7 @@ from app.schemas.finance import (
     BudgetCreateRequest,
     BudgetOut,
     DashboardOut,
+    ExpenseActionRequest,
     ExpenseCategoryOut,
     ExpenseWorkspaceOut,
     PaymentPriorityOut,
@@ -25,7 +26,6 @@ from app.schemas.finance import (
     SpendLimitUpdateRequest,
     VariableExpenseCreateRequest,
     VariableExpenseOut,
-    ExpenseActionRequest,
 )
 from app.services.finance_service import FinanceService
 

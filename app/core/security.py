@@ -16,8 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings, get_settings
 from app.core.rbac import APPROVAL_ROLES, FINANCE_WRITE_ROLES, ORG_READ_ROLES, normalize_role
 from app.db.session import get_db
-from app.services.user_service import MICROSOFT_CONSUMER_TENANT_ID
-from app.services.user_service import sync_user_context_from_claims
+from app.services.user_service import MICROSOFT_CONSUMER_TENANT_ID, sync_user_context_from_claims
 
 bearer_scheme = HTTPBearer(auto_error=False)
 logger = logging.getLogger(__name__)

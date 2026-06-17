@@ -31,19 +31,19 @@ class Organization(Base):
         onupdate=func.now(),
     )
 
-    memberships: Mapped[list["OrganizationMembership"]] = relationship(back_populates="organization")
-    departments: Mapped[list["Department"]] = relationship(back_populates="organization")
-    budgets: Mapped[list["Budget"]] = relationship(back_populates="organization")
-    categories: Mapped[list["ExpenseCategory"]] = relationship(back_populates="organization")
-    expenses: Mapped[list["Expense"]] = relationship(back_populates="organization")
-    documents: Mapped[list["Document"]] = relationship(back_populates="organization")
-    vendors: Mapped[list["Vendor"]] = relationship(back_populates="organization")
-    recurring_expenses: Mapped[list["RecurringExpense"]] = relationship(back_populates="organization")
-    recurring_expense_requests: Mapped[list["RecurringExpenseRequest"]] = relationship(back_populates="organization")
-    spend_limits: Mapped[list["SpendLimit"]] = relationship(back_populates="organization")
-    payment_priorities: Mapped[list["PaymentPriority"]] = relationship(back_populates="organization")
-    ai_chat_sessions: Mapped[list["AIChatSession"]] = relationship(back_populates="organization")
-    ai_chat_messages: Mapped[list["AIChatMessage"]] = relationship(back_populates="organization")
+    memberships: Mapped[list[OrganizationMembership]] = relationship(back_populates="organization")
+    departments: Mapped[list[Department]] = relationship(back_populates="organization")
+    budgets: Mapped[list[Budget]] = relationship(back_populates="organization")
+    categories: Mapped[list[ExpenseCategory]] = relationship(back_populates="organization")
+    expenses: Mapped[list[Expense]] = relationship(back_populates="organization")
+    documents: Mapped[list[Document]] = relationship(back_populates="organization")
+    vendors: Mapped[list[Vendor]] = relationship(back_populates="organization")
+    recurring_expenses: Mapped[list[RecurringExpense]] = relationship(back_populates="organization")
+    recurring_expense_requests: Mapped[list[RecurringExpenseRequest]] = relationship(back_populates="organization")
+    spend_limits: Mapped[list[SpendLimit]] = relationship(back_populates="organization")
+    payment_priorities: Mapped[list[PaymentPriority]] = relationship(back_populates="organization")
+    ai_chat_sessions: Mapped[list[AIChatSession]] = relationship(back_populates="organization")
+    ai_chat_messages: Mapped[list[AIChatMessage]] = relationship(back_populates="organization")
 
 
 class User(Base):
@@ -63,29 +63,29 @@ class User(Base):
         onupdate=func.now(),
     )
 
-    memberships: Mapped[list["OrganizationMembership"]] = relationship(back_populates="user")
-    sessions: Mapped[list["UserSession"]] = relationship(back_populates="user")
-    owned_documents: Mapped[list["Document"]] = relationship(
+    memberships: Mapped[list[OrganizationMembership]] = relationship(back_populates="user")
+    sessions: Mapped[list[UserSession]] = relationship(back_populates="user")
+    owned_documents: Mapped[list[Document]] = relationship(
         back_populates="owner",
         foreign_keys=lambda: [Document.owner_user_id],
     )
-    submitted_expenses: Mapped[list["Expense"]] = relationship(
+    submitted_expenses: Mapped[list[Expense]] = relationship(
         back_populates="submitted_by",
         foreign_keys=lambda: [Expense.submitted_by_user_id],
     )
-    reviewed_department_expenses: Mapped[list["Expense"]] = relationship(
+    reviewed_department_expenses: Mapped[list[Expense]] = relationship(
         foreign_keys=lambda: [Expense.dept_head_reviewer_user_id],
     )
-    approved_org_expenses: Mapped[list["Expense"]] = relationship(
+    approved_org_expenses: Mapped[list[Expense]] = relationship(
         foreign_keys=lambda: [Expense.org_owner_approver_user_id],
     )
-    recurring_expenses_created: Mapped[list["RecurringExpense"]] = relationship(
+    recurring_expenses_created: Mapped[list[RecurringExpense]] = relationship(
         foreign_keys=lambda: [RecurringExpense.created_by_user_id],
     )
-    recurring_expense_requests_created: Mapped[list["RecurringExpenseRequest"]] = relationship(
+    recurring_expense_requests_created: Mapped[list[RecurringExpenseRequest]] = relationship(
         foreign_keys=lambda: [RecurringExpenseRequest.requested_by_user_id],
     )
-    chat_sessions: Mapped[list["AIChatSession"]] = relationship(back_populates="user")
+    chat_sessions: Mapped[list[AIChatSession]] = relationship(back_populates="user")
 
 
 class Department(Base):
@@ -104,7 +104,7 @@ class Department(Base):
     )
 
     organization: Mapped[Organization] = relationship(back_populates="departments")
-    memberships: Mapped[list["OrganizationMembership"]] = relationship(back_populates="department")
+    memberships: Mapped[list[OrganizationMembership]] = relationship(back_populates="department")
 
 
 class OrganizationMembership(Base):
@@ -169,8 +169,8 @@ class ExpenseCategory(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     organization: Mapped[Organization] = relationship(back_populates="categories")
-    budgets: Mapped[list["Budget"]] = relationship(back_populates="category")
-    expenses: Mapped[list["Expense"]] = relationship(back_populates="category")
+    budgets: Mapped[list[Budget]] = relationship(back_populates="category")
+    expenses: Mapped[list[Expense]] = relationship(back_populates="category")
 
 
 class Budget(Base):
@@ -200,7 +200,7 @@ class Budget(Base):
     organization: Mapped[Organization] = relationship(back_populates="budgets")
     department: Mapped[Department | None] = relationship()
     category: Mapped[ExpenseCategory | None] = relationship(back_populates="budgets")
-    expenses: Mapped[list["Expense"]] = relationship(back_populates="budget")
+    expenses: Mapped[list[Expense]] = relationship(back_populates="budget")
 
 
 class Vendor(Base):
@@ -221,8 +221,8 @@ class Vendor(Base):
     )
 
     organization: Mapped[Organization] = relationship(back_populates="vendors")
-    recurring_expenses: Mapped[list["RecurringExpense"]] = relationship(back_populates="vendor")
-    expenses: Mapped[list["Expense"]] = relationship(back_populates="vendor")
+    recurring_expenses: Mapped[list[RecurringExpense]] = relationship(back_populates="vendor")
+    expenses: Mapped[list[Expense]] = relationship(back_populates="vendor")
 
 
 class Expense(Base):
@@ -275,12 +275,12 @@ class Expense(Base):
     vendor: Mapped[Vendor | None] = relationship(back_populates="expenses")
     budget: Mapped[Budget | None] = relationship(back_populates="expenses")
     category: Mapped[ExpenseCategory | None] = relationship(back_populates="expenses")
-    approvals: Mapped[list["ExpenseApproval"]] = relationship(
+    approvals: Mapped[list[ExpenseApproval]] = relationship(
         back_populates="expense",
         cascade="all, delete-orphan",
         order_by=lambda: ExpenseApproval.created_at.desc(),
     )
-    documents: Mapped[list["Document"]] = relationship(back_populates="expense")
+    documents: Mapped[list[Document]] = relationship(back_populates="expense")
 
 
 class ExpenseApproval(Base):
@@ -327,7 +327,7 @@ class Document(Base):
     owner: Mapped[User] = relationship(back_populates="owned_documents")
     department: Mapped[Department | None] = relationship()
     expense: Mapped[Expense | None] = relationship(back_populates="documents")
-    scans: Mapped[list["DocumentScan"]] = relationship(
+    scans: Mapped[list[DocumentScan]] = relationship(
         back_populates="document",
         cascade="all, delete-orphan",
         order_by=lambda: DocumentScan.created_at.desc(),
@@ -504,7 +504,7 @@ class AIChatSession(Base):
 
     organization: Mapped[Organization] = relationship(back_populates="ai_chat_sessions")
     user: Mapped[User] = relationship(back_populates="chat_sessions")
-    messages: Mapped[list["AIChatMessage"]] = relationship(
+    messages: Mapped[list[AIChatMessage]] = relationship(
         back_populates="session",
         cascade="all, delete-orphan",
         order_by=lambda: AIChatMessage.created_at.asc(),

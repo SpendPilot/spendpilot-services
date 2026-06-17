@@ -6,7 +6,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.security import AuthenticatedPrincipal
-from app.models import AIChatMessage, AIChatSession, Expense, PaymentPriority, RecurringExpense
+from app.models import AIChatMessage, AIChatSession, Expense, RecurringExpense
 from app.services.finance_service import FinanceService
 
 

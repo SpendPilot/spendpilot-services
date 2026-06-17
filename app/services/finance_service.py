@@ -8,7 +8,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
-from app.core.rbac import ROLE_DEPT_HEAD, ROLE_EMPLOYEE, ROLE_ORG_OWNER, APPROVAL_ROLES
+from app.core.rbac import ROLE_DEPT_HEAD, ROLE_EMPLOYEE, ROLE_ORG_OWNER
 from app.core.security import AuthenticatedPrincipal
 from app.models import (
     AuditEvent,
@@ -27,8 +27,9 @@ from app.models import (
 from app.schemas.finance import (
     BudgetCreateRequest,
     BudgetOut,
-    DepartmentSpendOut,
+    CategorySpendOut,
     DashboardOut,
+    DepartmentSpendOut,
     ExpenseActionRequest,
     PaymentPriorityOut,
     RecurringExpenseCreateRequest,
@@ -38,7 +39,6 @@ from app.schemas.finance import (
     SpendLimitCreateRequest,
     SpendLimitUpdateRequest,
     VariableExpenseCreateRequest,
-    CategorySpendOut,
 )
 from app.services.audit_service import create_audit_event
 

@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
 from app.core.security import get_current_principal
+from app.db.session import get_db
 from app.schemas.ai import AIChatRequest, AIChatResponseOut, AIChatSessionOut
 from app.schemas.common import APIEnvelope
 from app.schemas.documents import DocumentAnalysisResult, TextAnalyzeRequest
 from app.services.ai_chat_service import AIChatService
 from app.services.document_service import DocumentService
-from app.db.session import get_db
-from sqlalchemy.orm import Session
 
 router = APIRouter()
 document_service = DocumentService()
