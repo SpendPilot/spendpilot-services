@@ -1,11 +1,11 @@
 # Backend
 
-The backend is a shared FastAPI codebase with four entrypoints:
+The backend is organized as three deployable service folders plus one combined local-development app:
 
 - `app.main:app` for local combined development
-- `app.service_apps.identity:app` for auth, sessions, org admin, and tenant bootstrap
-- `app.service_apps.finance:app` for budgets, expenses, approvals, and dashboard data
-- `app.service_apps.documents:app` for uploads, scans, OCR, invoice extraction, and AI analysis
+- `services/identity/service_app.py` for auth, sessions, org admin, and tenant bootstrap
+- `services/finance/service_app.py` for budgets, expenses, approvals, and dashboard data
+- `services/documents/service_app.py` for uploads, scans, OCR, invoice extraction, and AI analysis
 
 Core capabilities:
 
@@ -25,8 +25,10 @@ pytest
 
 ## Service split in AKS
 
-Each backend deployment uses the same image with a different `APP_MODULE`:
+Each backend deployment now builds its own image from its own service folder:
 
-- `app.service_apps.identity:app`
-- `app.service_apps.finance:app`
-- `app.service_apps.documents:app`
+- `services/identity/Dockerfile`
+- `services/finance/Dockerfile`
+- `services/documents/Dockerfile`
+
+All three images still share the same internal Python package, database models, and Alembic migrations so runtime behavior stays aligned across the split.
