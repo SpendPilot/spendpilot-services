@@ -134,7 +134,7 @@ def upgrade() -> None:
     )
     op.create_index("ix_ai_chat_messages_organization_id", "ai_chat_messages", ["organization_id"], unique=False)
 
-    with op.batch_alter_table("budgets", recreate="always") as batch_op:
+    with op.batch_alter_table("budgets") as batch_op:
         batch_op.add_column(sa.Column("department_id", sa.String(length=36), nullable=True))
         batch_op.add_column(sa.Column("scope", sa.String(length=20), nullable=False, server_default="company"))
         batch_op.add_column(sa.Column("month", sa.Integer(), nullable=True))
@@ -142,7 +142,7 @@ def upgrade() -> None:
         batch_op.create_index("ix_budgets_department_id", ["department_id"], unique=False)
         batch_op.create_foreign_key("fk_budgets_department_id_departments", "departments", ["department_id"], ["id"])
 
-    with op.batch_alter_table("expenses", recreate="always") as batch_op:
+    with op.batch_alter_table("expenses") as batch_op:
         batch_op.add_column(sa.Column("department_id", sa.String(length=36), nullable=True))
         batch_op.add_column(sa.Column("vendor_id", sa.String(length=36), nullable=True))
         batch_op.add_column(sa.Column("expense_type", sa.String(length=20), nullable=False, server_default="variable"))
@@ -169,7 +169,7 @@ def upgrade() -> None:
             ["id"],
         )
 
-    with op.batch_alter_table("documents", recreate="always") as batch_op:
+    with op.batch_alter_table("documents") as batch_op:
         batch_op.add_column(sa.Column("department_id", sa.String(length=36), nullable=True))
         batch_op.add_column(sa.Column("linked_expense_type", sa.String(length=30), nullable=True))
         batch_op.add_column(sa.Column("linked_expense_id", sa.String(length=36), nullable=True))
@@ -178,14 +178,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    with op.batch_alter_table("documents", recreate="always") as batch_op:
+    with op.batch_alter_table("documents") as batch_op:
         batch_op.drop_constraint("fk_documents_department_id_departments", type_="foreignkey")
         batch_op.drop_index("ix_documents_department_id")
         batch_op.drop_column("linked_expense_id")
         batch_op.drop_column("linked_expense_type")
         batch_op.drop_column("department_id")
 
-    with op.batch_alter_table("expenses", recreate="always") as batch_op:
+    with op.batch_alter_table("expenses") as batch_op:
         batch_op.drop_constraint("fk_expenses_org_owner_approver_user_id_users", type_="foreignkey")
         batch_op.drop_constraint("fk_expenses_dept_head_reviewer_user_id_users", type_="foreignkey")
         batch_op.drop_constraint("fk_expenses_vendor_id_vendors", type_="foreignkey")
@@ -202,7 +202,7 @@ def downgrade() -> None:
         batch_op.drop_column("vendor_id")
         batch_op.drop_column("department_id")
 
-    with op.batch_alter_table("budgets", recreate="always") as batch_op:
+    with op.batch_alter_table("budgets") as batch_op:
         batch_op.drop_constraint("fk_budgets_department_id_departments", type_="foreignkey")
         batch_op.drop_index("ix_budgets_department_id")
         batch_op.drop_column("year")
