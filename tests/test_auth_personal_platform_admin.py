@@ -61,6 +61,7 @@ def test_personal_account_bootstraps_isolated_workspace(monkeypatch) -> None:
             session_identifier="session-owner",
             auth_provider="entra",
             user_agent="pytest",
+            workspace_mode="personal",
         )
 
     assert context.user.platform_role == "platform_admin"
@@ -81,6 +82,7 @@ def test_personal_accounts_do_not_share_the_consumer_tenant_workspace(monkeypatc
             session_identifier="session-user-1",
             auth_provider="entra",
             user_agent="pytest",
+            workspace_mode="personal",
         )
         first_org_id = first.organization.id
         first_tenant_id = first.organization.tenant_id
@@ -92,6 +94,7 @@ def test_personal_accounts_do_not_share_the_consumer_tenant_workspace(monkeypatc
             session_identifier="session-user-2",
             auth_provider="entra",
             user_agent="pytest",
+            workspace_mode="personal",
         )
         second_org_id = second.organization.id
         second_tenant_id = second.organization.tenant_id
@@ -148,3 +151,25 @@ def test_guest_personal_account_in_org_tenant_joins_tenant_workspace(monkeypatch
     assert native.organization.tenant_id == tenant_id
     assert guest.organization.tenant_id == tenant_id
     assert guest.membership.role == "employee"
+
+
+def test_consumer_account_requires_explicit_personal_workspace_mode_for_first_bootstrap(monkeypatch) -> None:
+    monkeypatch.delenv("PLATFORM_ADMIN_EMAILS", raising=False)
+    get_settings.cache_clear()
+
+    with SessionLocal() as db:
+        try:
+            sync_user_context_from_claims(
+                db,
+                _consumer_payload("someone-new@outlook.com"),
+                session_fingerprint="fingerprint-user-3",
+                session_identifier="session-user-3",
+                auth_provider="entra",
+                user_agent="pytest",
+            )
+        except ValueError as exc:
+            message = str(exc)
+        else:
+            raise AssertionError("Expected the first consumer bootstrap without personal workspace mode to fail")
+
+    assert "personal workspace mode" in message.lower()

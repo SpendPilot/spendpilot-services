@@ -162,6 +162,7 @@ def sync_user_context_from_claims(
     session_identifier: str,
     auth_provider: str,
     user_agent: str | None,
+    workspace_mode: str | None = None,
 ) -> AuthContext:
     settings = get_settings()
     email = payload.get("preferred_username") or payload.get("upn") or payload.get("email")
@@ -174,6 +175,12 @@ def sync_user_context_from_claims(
     is_consumer_account = _is_consumer_tenant_account(payload)
     tenant_id = _organization_partition_key(payload, email)
     external_id = _external_id_from_claims(payload)
+    organization = db.query(Organization).filter(Organization.tenant_id == tenant_id).first()
+    if is_consumer_account and organization is None and workspace_mode != "personal":
+        raise ValueError(
+            "Personal Microsoft account sign-in did not start in personal workspace mode. "
+            "Use the work-account flow for company onboarding, or explicitly choose personal workspace sign-in."
+        )
     user = db.query(User).filter(User.external_id == external_id).first()
     if user is None:
         user = User(
@@ -194,7 +201,6 @@ def sync_user_context_from_claims(
         if is_platform_admin:
             user.platform_role = ROLE_PLATFORM_ADMIN
 
-    organization = db.query(Organization).filter(Organization.tenant_id == tenant_id).first()
     if organization is None:
         org_name = (
             _personal_workspace_name(payload, email)
