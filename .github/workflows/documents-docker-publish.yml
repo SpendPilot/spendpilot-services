@@ -38,7 +38,6 @@ permissions:
 #hi
 env:
   IMAGE_REPOSITORY: ${{ vars.ACR_LOGIN_SERVER }}/${{ vars.ACR_DOCUMENTS_REPOSITORY || 'spend-control-documents' }}
-  IMAGE_TAG: sha-${{ github.sha }}
   GITOPS_REPOSITORY: SpendPilot/spendpilot-gitops
   GITOPS_VALUES_FILE: environments/prod/values/spendpilot-values.yaml
 
@@ -95,13 +94,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Compute image tag
+        id: vars
+        run: |
+          echo "image_tag=${GITHUB_SHA: -7}" >> "$GITHUB_OUTPUT"
+
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_REPOSITORY }}
           tags: |
-            type=raw,value=${{ env.IMAGE_TAG }}
+            type=raw,value=${{ steps.vars.outputs.image_tag }}
           labels: |
             org.opencontainers.image.title=SpendPilot Documents Service
             org.opencontainers.image.description=SpendPilot documents service container image
@@ -123,7 +127,7 @@ jobs:
       - name: Show published image
         run: |
           echo "Published image:"
-          echo "${{ env.IMAGE_REPOSITORY }}:${{ env.IMAGE_TAG }}"
+          echo "${{ env.IMAGE_REPOSITORY }}:${{ steps.vars.outputs.image_tag }}"
 
       - name: Install yq
         run: |
@@ -143,7 +147,7 @@ jobs:
         run: |
           yq -i '.documentsService.image.tag = strenv(IMAGE_TAG)' "${{ env.GITOPS_VALUES_FILE }}"
         env:
-          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          IMAGE_TAG: ${{ steps.vars.outputs.image_tag }}
 
       - name: Commit and push GitOps promotion
         working-directory: gitops
@@ -160,4 +164,4 @@ jobs:
           git pull --rebase origin main
           git push origin HEAD:main
         env:
-          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          IMAGE_TAG: ${{ steps.vars.outputs.image_tag }}
