@@ -187,7 +187,6 @@ def get_current_principal(
             session_identifier=session_identifier,
             auth_provider="dev-local" if settings.auth_mode == "dev-local" else "entra",
             user_agent=request.headers.get("user-agent"),
-            workspace_mode=request.headers.get("x-spend-workspace-mode"),
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc

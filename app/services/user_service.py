@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -12,7 +11,6 @@ from app.core.rbac import ROLE_DEPT_HEAD, ROLE_EMPLOYEE, ROLE_ORG_OWNER, ROLE_PL
 from app.models import Department, ExpenseCategory, Organization, OrganizationMembership, User, UserSession
 
 MICROSOFT_CONSUMER_TENANT_ID = "9188040d-6c67-4c5b-b112-36a304b66dad"
-PERSONAL_ACCOUNT_TENANT_PREFIX = "msa"
 
 DEFAULT_CATEGORIES = [
     ("travel", "Travel"),
@@ -48,26 +46,20 @@ def _org_name_from_email(email: str) -> str:
     return domain.title() or "Organization"
 
 
-def _personal_workspace_name(payload: dict, email: str) -> str:
-    display_name = str(payload.get("name") or "").strip()
-    base_name = display_name or email.split("@")[0].replace(".", " ").replace("_", " ").title()
-    return f"{base_name} Workspace"
-
-
 def _is_consumer_tenant_account(payload: dict) -> bool:
     tenant_id = str(payload.get("tid") or "").strip().lower()
     issuer = str(payload.get("iss") or "").strip().lower()
     return tenant_id == MICROSOFT_CONSUMER_TENANT_ID or "/consumers/" in issuer
 
 
-def _organization_partition_key(payload: dict, email: str) -> str:
+def _organization_partition_key(payload: dict) -> str:
     tenant_id = str(payload.get("tid") or "local-dev-tenant").strip()
-    if not _is_consumer_tenant_account(payload):
-        return tenant_id
-
-    stable_account_key = str(payload.get("oid") or payload.get("sub") or email.strip().lower())
-    digest = hashlib.sha256(stable_account_key.encode("utf-8")).hexdigest()[:24]
-    return f"{PERSONAL_ACCOUNT_TENANT_PREFIX}:{digest}"
+    if _is_consumer_tenant_account(payload):
+        raise ValueError(
+            "Personal Microsoft account tokens cannot create or join a company workspace directly. "
+            "Sign in with a tenant-scoped work or guest account."
+        )
+    return tenant_id
 
 
 def _claims_roles(payload: dict) -> list[str]:
@@ -162,7 +154,6 @@ def sync_user_context_from_claims(
     session_identifier: str,
     auth_provider: str,
     user_agent: str | None,
-    workspace_mode: str | None = None,
 ) -> AuthContext:
     settings = get_settings()
     email = payload.get("preferred_username") or payload.get("upn") or payload.get("email")
@@ -172,15 +163,9 @@ def sync_user_context_from_claims(
     email = str(email).strip()
     original_tenant_id = str(payload.get("tid") or "local-dev-tenant")
     is_platform_admin = email.lower() in settings.platform_admin_emails_list
-    is_consumer_account = _is_consumer_tenant_account(payload)
-    tenant_id = _organization_partition_key(payload, email)
+    tenant_id = _organization_partition_key(payload)
     external_id = _external_id_from_claims(payload)
     organization = db.query(Organization).filter(Organization.tenant_id == tenant_id).first()
-    if is_consumer_account and organization is None and workspace_mode != "personal":
-        raise ValueError(
-            "Personal Microsoft account sign-in did not start in personal workspace mode. "
-            "Use the work-account flow for company onboarding, or explicitly choose personal workspace sign-in."
-        )
     user = db.query(User).filter(User.external_id == external_id).first()
     if user is None:
         user = User(
@@ -202,11 +187,7 @@ def sync_user_context_from_claims(
             user.platform_role = ROLE_PLATFORM_ADMIN
 
     if organization is None:
-        org_name = (
-            _personal_workspace_name(payload, email)
-            if is_consumer_account
-            else payload.get("tenant_name") or _org_name_from_email(email)
-        )
+        org_name = payload.get("tenant_name") or _org_name_from_email(email)
         organization = Organization(
             tenant_id=tenant_id,
             name=org_name,
