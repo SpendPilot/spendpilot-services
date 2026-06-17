@@ -4,6 +4,31 @@ on:
   push:
     branches:
       - main
+    paths:
+      - ".github/workflows/documents-docker-publish.yml"
+      - "services/documents/**"
+      - "app/core/**"
+      - "app/db/**"
+      - "app/models/**"
+      - "app/api/routes/health.py"
+      - "app/api/routes/documents.py"
+      - "app/api/routes/ai.py"
+      - "app/schemas/common.py"
+      - "app/schemas/documents.py"
+      - "app/schemas/ai.py"
+      - "app/services/document_service.py"
+      - "app/services/ai_foundry_service.py"
+      - "app/services/ai_chat_service.py"
+      - "app/services/storage_service.py"
+      - "app/services/policy_service.py"
+      - "app/services/finance_service.py"
+      - "app/services/audit_service.py"
+      - "app/main.py"
+      - "app/app_factory.py"
+      - "alembic.ini"
+      - "pyproject.toml"
+      - ".dockerignore"
+      - ".env.example"
 
   workflow_dispatch:
 
