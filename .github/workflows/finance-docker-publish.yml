@@ -30,7 +30,7 @@ permissions:
   id-token: write
 
 env:
-  IMAGE_REPOSITORY: ${{ vars.ACR_LOGIN_SERVER }}/${{ vars.ACR_FINANCE_REPOSITORY }}
+  IMAGE_REPOSITORY: ${{ vars.ACR_LOGIN_SERVER }}/${{ vars.ACR_FINANCE_REPOSITORY || 'spend-control-finance' }}
 
 jobs:
   validate:
