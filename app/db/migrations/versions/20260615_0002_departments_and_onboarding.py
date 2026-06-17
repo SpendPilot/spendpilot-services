@@ -93,7 +93,7 @@ def upgrade() -> None:
         sa.text(
             """
             UPDATE organization_memberships
-            SET onboarding_completed = 1
+            SET onboarding_completed = TRUE
             WHERE role = 'org_owner'
             """
         )
