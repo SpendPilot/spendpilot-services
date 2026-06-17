@@ -31,6 +31,9 @@ permissions:
 
 env:
   IMAGE_REPOSITORY: ${{ vars.ACR_LOGIN_SERVER }}/${{ vars.ACR_FINANCE_REPOSITORY || 'spend-control-finance' }}
+  IMAGE_TAG: sha-${{ github.sha }}
+  GITOPS_REPOSITORY: SpendPilot/spendpilot-gitops
+  GITOPS_VALUES_FILE: environments/prod/values/spendpilot-values.yaml
 
 jobs:
   validate:
@@ -91,7 +94,7 @@ jobs:
         with:
           images: ${{ env.IMAGE_REPOSITORY }}
           tags: |
-            type=raw,value=sha-${{ github.sha }}
+            type=raw,value=${{ env.IMAGE_TAG }}
           labels: |
             org.opencontainers.image.title=SpendPilot Finance Service
             org.opencontainers.image.description=SpendPilot finance service container image
@@ -113,4 +116,41 @@ jobs:
       - name: Show published image
         run: |
           echo "Published image:"
-          echo "${{ env.IMAGE_REPOSITORY }}:sha-${{ github.sha }}"
+          echo "${{ env.IMAGE_REPOSITORY }}:${{ env.IMAGE_TAG }}"
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Checkout GitOps repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GITOPS_REPOSITORY }}
+          ref: main
+          token: ${{ secrets.GITOPS_REPO_TOKEN }}
+          path: gitops
+
+      - name: Update production finance image tag
+        working-directory: gitops
+        run: |
+          yq -i '.financeService.image.tag = strenv(IMAGE_TAG)' "${{ env.GITOPS_VALUES_FILE }}"
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+
+      - name: Commit and push GitOps promotion
+        working-directory: gitops
+        run: |
+          if git diff --quiet -- "${{ env.GITOPS_VALUES_FILE }}"; then
+            echo "No GitOps changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "${{ env.GITOPS_VALUES_FILE }}"
+          git commit -m "Promote finance image to ${IMAGE_TAG}"
+          git pull --rebase origin main
+          git push origin HEAD:main
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
