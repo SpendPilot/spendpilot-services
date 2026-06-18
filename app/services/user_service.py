@@ -56,8 +56,8 @@ def _organization_partition_key(payload: dict) -> str:
     tenant_id = str(payload.get("tid") or "local-dev-tenant").strip()
     if _is_consumer_tenant_account(payload):
         raise ValueError(
-            "Personal Microsoft account tokens cannot create or join a company workspace directly. "
-            "Sign in with a tenant-scoped work or guest account."
+            "Standalone personal Microsoft account tokens cannot bootstrap a company workspace directly. "
+            "Sign in through a tenant-scoped work or guest account context."
         )
     return tenant_id
 

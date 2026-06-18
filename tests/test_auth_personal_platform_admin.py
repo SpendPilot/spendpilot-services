@@ -88,6 +88,55 @@ def test_guest_personal_account_in_org_tenant_joins_tenant_workspace(monkeypatch
     assert guest.membership.role == "employee"
 
 
+def test_first_guest_personal_account_in_org_tenant_bootstraps_owner(monkeypatch) -> None:
+    monkeypatch.delenv("PLATFORM_ADMIN_EMAILS", raising=False)
+    get_settings.cache_clear()
+    tenant_id = "12345678-1234-5678-90ab-1234567890ab"
+
+    with SessionLocal() as db:
+        first = sync_user_context_from_claims(
+            db,
+            _guest_personal_payload(
+                "first_guest_outlook.com#EXT#@exampleorg.onmicrosoft.com",
+                "oid-first-guest",
+                tenant_id=tenant_id,
+            ),
+            session_fingerprint="fingerprint-first-guest",
+            session_identifier="session-first-guest",
+            auth_provider="entra",
+            user_agent="pytest",
+        )
+        first_org_id = first.organization.id
+        first_tenant_id = first.organization.tenant_id
+        first_role = first.membership.role
+        second = sync_user_context_from_claims(
+            db,
+            {
+                "tid": tenant_id,
+                "oid": "oid-employee",
+                "sub": "sub-employee",
+                "email": "employee@exampleorg.com",
+                "preferred_username": "employee@exampleorg.com",
+                "name": "Employee User",
+                "iss": f"https://login.microsoftonline.com/{tenant_id}/v2.0",
+                "iat": int(datetime.now(UTC).timestamp()),
+                "exp": int((datetime.now(UTC) + timedelta(hours=1)).timestamp()),
+                "sid": "sid-employee",
+            },
+            session_fingerprint="fingerprint-employee",
+            session_identifier="session-employee",
+            auth_provider="entra",
+            user_agent="pytest",
+        )
+        second_org_id = second.organization.id
+        second_role = second.membership.role
+
+    assert first_org_id == second_org_id
+    assert first_tenant_id == tenant_id
+    assert first_role == "org_owner"
+    assert second_role == "employee"
+
+
 def test_consumer_account_cannot_create_company_workspace(monkeypatch) -> None:
     monkeypatch.delenv("PLATFORM_ADMIN_EMAILS", raising=False)
     get_settings.cache_clear()
