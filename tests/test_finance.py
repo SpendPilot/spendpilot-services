@@ -358,3 +358,25 @@ def test_owner_can_cancel_recurring_expense() -> None:
     )
     assert cancelled.status_code == 200
     assert cancelled.json()["data"]["status"] == "cancelled"
+
+
+def test_owner_can_delete_spend_limit() -> None:
+    client = get_client()
+    tenant_id = "tenant-spend-limit-delete"
+    owner_headers = _auth_header(client, "owner5@example.com", "org_owner", tenant_id)
+
+    created = client.post(
+        "/api/finance/spend-limits",
+        headers=owner_headers,
+        json={
+            "category": "Travel",
+            "max_single_expense_amount": "3000.00",
+            "monthly_limit": "20000.00",
+        },
+    )
+    assert created.status_code == 200
+    spend_limit_id = created.json()["data"]["id"]
+
+    deleted = client.delete(f"/api/finance/spend-limits/{spend_limit_id}", headers=owner_headers)
+    assert deleted.status_code == 200
+    assert deleted.json()["data"]["status"] == "deleted"

@@ -657,6 +657,21 @@ class FinanceService:
         db.refresh(spend_limit)
         return spend_limit
 
+    def delete_spend_limit(self, db: Session, principal: AuthenticatedPrincipal, spend_limit_id: str) -> None:
+        self._require_org_owner(principal)
+        spend_limit = (
+            db.query(SpendLimit)
+            .filter(
+                SpendLimit.id == spend_limit_id,
+                SpendLimit.organization_id == principal.organization_id,
+            )
+            .first()
+        )
+        if spend_limit is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Spend limit not found")
+        db.delete(spend_limit)
+        db.commit()
+
     def recalculate_payment_priorities(self, db: Session, principal: AuthenticatedPrincipal) -> list[PaymentPriority]:
         today = date.today()
         end_of_week = today + timedelta(days=7)

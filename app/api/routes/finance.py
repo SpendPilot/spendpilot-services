@@ -232,6 +232,16 @@ def update_spend_limit(
     return APIEnvelope(data=_to_spend_limit_out(finance_service.update_spend_limit(db, principal, spend_limit_id, payload)))
 
 
+@router.delete("/spend-limits/{spend_limit_id}", response_model=APIEnvelope[dict[str, str]])
+def delete_spend_limit(
+    spend_limit_id: str,
+    principal=Depends(get_current_principal),
+    db: Session = Depends(get_db),
+) -> APIEnvelope[dict[str, str]]:
+    finance_service.delete_spend_limit(db, principal, spend_limit_id)
+    return APIEnvelope(data={"status": "deleted"})
+
+
 @router.get("/payment-priorities", response_model=APIEnvelope[list[PaymentPriorityOut]])
 def payment_priorities(principal=Depends(get_current_principal), db: Session = Depends(get_db)) -> APIEnvelope[list[PaymentPriorityOut]]:
     return APIEnvelope(data=[_to_priority_out(item, db, principal) for item in finance_service.recalculate_payment_priorities(db, principal)])
