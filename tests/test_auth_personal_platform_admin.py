@@ -137,23 +137,20 @@ def test_first_guest_personal_account_in_org_tenant_bootstraps_owner(monkeypatch
     assert second_role == "employee"
 
 
-def test_consumer_account_cannot_create_company_workspace(monkeypatch) -> None:
+def test_consumer_account_bootstraps_personal_workspace(monkeypatch) -> None:
     monkeypatch.delenv("PLATFORM_ADMIN_EMAILS", raising=False)
     get_settings.cache_clear()
 
     with SessionLocal() as db:
-        try:
-            sync_user_context_from_claims(
-                db,
-                _consumer_payload("someone-new@outlook.com"),
-                session_fingerprint="fingerprint-user-3",
-                session_identifier="session-user-3",
-                auth_provider="entra",
-                user_agent="pytest",
-            )
-        except ValueError as exc:
-            message = str(exc)
-        else:
-            raise AssertionError("Expected consumer account bootstrap to fail")
+        context = sync_user_context_from_claims(
+            db,
+            _consumer_payload("someone-new@outlook.com"),
+            session_fingerprint="fingerprint-user-3",
+            session_identifier="session-user-3",
+            auth_provider="entra",
+            user_agent="pytest",
+        )
 
-    assert "tenant-scoped work or guest account" in message.lower()
+    assert context.organization.tenant_id == "consumer:sub-someone-new@outlook.com"
+    assert context.organization.name == "Platform Owner Workspace"
+    assert context.membership.role == "org_owner"

@@ -46,6 +46,14 @@ def _org_name_from_email(email: str) -> str:
     return domain.title() or "Organization"
 
 
+def _personal_workspace_name(payload: dict, email: str) -> str:
+    display_name = str(payload.get("name") or "").strip()
+    if display_name:
+        return f"{display_name} Workspace"
+    local_part = email.split("@")[0].replace(".", " ").replace("_", " ").replace("-", " ").strip()
+    return f"{local_part.title() or 'Personal'} Workspace"
+
+
 def _is_consumer_tenant_account(payload: dict) -> bool:
     tenant_id = str(payload.get("tid") or "").strip().lower()
     issuer = str(payload.get("iss") or "").strip().lower()
@@ -55,10 +63,10 @@ def _is_consumer_tenant_account(payload: dict) -> bool:
 def _organization_partition_key(payload: dict) -> str:
     tenant_id = str(payload.get("tid") or "local-dev-tenant").strip()
     if _is_consumer_tenant_account(payload):
-        raise ValueError(
-            "Standalone personal Microsoft account tokens cannot bootstrap a company workspace directly. "
-            "Sign in through a tenant-scoped work or guest account context."
-        )
+        consumer_subject = str(payload.get("oid") or payload.get("sub") or payload.get("email") or "").strip()
+        if not consumer_subject:
+            raise ValueError("Personal Microsoft account token did not include a stable identifier")
+        return f"consumer:{consumer_subject}"[:100]
     return tenant_id
 
 
@@ -87,6 +95,8 @@ def _session_times(payload: dict) -> tuple[datetime | None, datetime | None]:
 
 
 def _default_membership_role(db: Session, organization: Organization, payload: dict) -> str:
+    if _is_consumer_tenant_account(payload):
+        return ROLE_ORG_OWNER
     token_role = derive_highest_role(_claims_roles(payload))
     member_count = db.query(OrganizationMembership).filter(
         OrganizationMembership.organization_id == organization.id
@@ -162,6 +172,7 @@ def sync_user_context_from_claims(
 
     email = str(email).strip()
     original_tenant_id = str(payload.get("tid") or "local-dev-tenant")
+    is_consumer_account = _is_consumer_tenant_account(payload)
     is_platform_admin = email.lower() in settings.platform_admin_emails_list
     tenant_id = _organization_partition_key(payload)
     external_id = _external_id_from_claims(payload)
@@ -187,7 +198,11 @@ def sync_user_context_from_claims(
             user.platform_role = ROLE_PLATFORM_ADMIN
 
     if organization is None:
-        org_name = payload.get("tenant_name") or _org_name_from_email(email)
+        org_name = (
+            _personal_workspace_name(payload, email)
+            if is_consumer_account
+            else payload.get("tenant_name") or _org_name_from_email(email)
+        )
         organization = Organization(
             tenant_id=tenant_id,
             name=org_name,
