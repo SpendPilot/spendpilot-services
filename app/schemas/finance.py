@@ -209,12 +209,10 @@ class RecurringExpenseRequestOut(BaseModel):
 
 class SpendLimitCreateRequest(BaseModel):
     department_id: str | None = None
-    user_id: str | None = None
     category: str | None = None
     max_single_expense_amount: Decimal | None = None
     monthly_limit: Decimal | None = None
     requires_approval_above_amount: Decimal | None = None
-    allowed_categories: list[str] = Field(default_factory=list)
     recurring_creation_restricted: bool = False
     variable_requires_org_owner: bool = False
     active: bool = True
@@ -222,12 +220,10 @@ class SpendLimitCreateRequest(BaseModel):
 
 class SpendLimitUpdateRequest(BaseModel):
     department_id: str | None = None
-    user_id: str | None = None
     category: str | None = None
     max_single_expense_amount: Decimal | None = None
     monthly_limit: Decimal | None = None
     requires_approval_above_amount: Decimal | None = None
-    allowed_categories: list[str] | None = None
     recurring_creation_restricted: bool | None = None
     variable_requires_org_owner: bool | None = None
     active: bool | None = None
@@ -239,12 +235,10 @@ class SpendLimitOut(BaseModel):
     max_single_expense_amount: Decimal | None
     monthly_limit: Decimal | None
     requires_approval_above_amount: Decimal | None
-    allowed_categories: list[str] = Field(default_factory=list)
     recurring_creation_restricted: bool
     variable_requires_org_owner: bool
     active: bool
     department: DepartmentSummaryOut | None = None
-    user_id: str | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from calendar import monthrange
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -41,6 +42,13 @@ from app.schemas.finance import (
     VariableExpenseCreateRequest,
 )
 from app.services.audit_service import create_audit_event
+
+
+@dataclass
+class SpendLimitPolicy:
+    matched_limit: SpendLimit | None
+    requires_org_owner_review: bool
+    company_threshold: Decimal | None
 
 
 class FinanceService:
@@ -153,10 +161,17 @@ class FinanceService:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Department onboarding is required")
 
         category = self._get_category(db, principal.organization_id, payload.category_id) if payload.category_id else None
-        spend_limit = self._evaluate_spend_limits(db, principal, payload.amount, category.name if category else None)
+        spend_limit_policy = self._evaluate_spend_limit_policy(
+            db,
+            principal,
+            payload.amount,
+            category.name if category else None,
+        )
         status_value = "forwarded_to_org_owner" if principal.role == ROLE_DEPT_HEAD else "pending_dept_head"
         policy_status = "needs_org_owner_review" if principal.role == ROLE_DEPT_HEAD else "needs_dept_head_review"
-        if spend_limit and spend_limit.variable_requires_org_owner:
+        if principal.role == ROLE_EMPLOYEE and spend_limit_policy.requires_org_owner_review:
+            policy_status = "needs_org_owner_review"
+        if principal.role == ROLE_DEPT_HEAD and spend_limit_policy.requires_org_owner_review:
             status_value = "forwarded_to_org_owner"
             policy_status = "needs_org_owner_review"
 
@@ -209,7 +224,17 @@ class FinanceService:
         if principal.role == ROLE_DEPT_HEAD:
             if expense.department_id != principal.department_id:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Department access denied")
-            if action == "forward":
+            if action == "approve":
+                if expense.status != "pending_dept_head":
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Expense is not awaiting department review")
+                if expense.policy_status == "needs_org_owner_review":
+                    expense.status = "forwarded_to_org_owner"
+                    expense.policy_status = "needs_org_owner_review"
+                else:
+                    expense.status = "approved_by_dept_head"
+                    expense.policy_status = "approved"
+                expense.dept_head_reviewer_user_id = principal.user_id
+            elif action == "forward":
                 expense.status = "forwarded_to_org_owner"
                 expense.policy_status = "needs_org_owner_review"
                 expense.dept_head_reviewer_user_id = principal.user_id
@@ -341,6 +366,41 @@ class FinanceService:
         db.refresh(recurring)
         return recurring
 
+    def cancel_recurring_expense(
+        self,
+        db: Session,
+        principal: AuthenticatedPrincipal,
+        recurring_id: str,
+        payload: ExpenseActionRequest,
+    ) -> RecurringExpense:
+        self._require_org_owner(principal)
+        recurring = (
+            db.query(RecurringExpense)
+            .options(joinedload(RecurringExpense.department), joinedload(RecurringExpense.vendor))
+            .filter(
+                RecurringExpense.id == recurring_id,
+                RecurringExpense.organization_id == principal.organization_id,
+            )
+            .first()
+        )
+        if recurring is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recurring expense not found")
+        if recurring.status == "cancelled":
+            return recurring
+        recurring.status = "cancelled"
+        db.commit()
+        db.refresh(recurring)
+        create_audit_event(
+            db,
+            organization_id=principal.organization_id,
+            actor_user_id=principal.user_id,
+            resource_type="recurring_expense",
+            resource_id=recurring.id,
+            action="cancelled",
+            details={"name": recurring.name, "reason": payload.comment or "Cancelled by organization owner"},
+        )
+        return recurring
+
     def list_recurring_requests(self, db: Session, principal: AuthenticatedPrincipal) -> list[RecurringExpenseRequest]:
         query = (
             db.query(RecurringExpenseRequest)
@@ -458,7 +518,7 @@ class FinanceService:
         if principal.role == ROLE_DEPT_HEAD:
             query = query.filter((SpendLimit.department_id == principal.department_id) | (SpendLimit.department_id.is_(None)))
         elif principal.role == ROLE_EMPLOYEE:
-            query = query.filter((SpendLimit.user_id == principal.user_id) | (SpendLimit.department_id == principal.department_id))
+            query = query.filter((SpendLimit.department_id == principal.department_id) | (SpendLimit.department_id.is_(None)))
         return query.all()
 
     def create_spend_limit(
@@ -472,12 +532,10 @@ class FinanceService:
         spend_limit = SpendLimit(
             organization_id=principal.organization_id,
             department_id=department_id,
-            user_id=payload.user_id,
             category=payload.category,
             max_single_expense_amount=payload.max_single_expense_amount,
             monthly_limit=payload.monthly_limit,
             requires_approval_above_amount=payload.requires_approval_above_amount,
-            allowed_categories_json=payload.allowed_categories,
             recurring_creation_restricted=payload.recurring_creation_restricted,
             variable_requires_org_owner=payload.variable_requires_org_owner,
             active=payload.active,
@@ -511,8 +569,6 @@ class FinanceService:
         if "department_id" in updates:
             department_id = updates.pop("department_id")
             spend_limit.department_id = self._validate_department(db, principal, department_id) if department_id else None
-        if "allowed_categories" in updates:
-            spend_limit.allowed_categories_json = updates.pop("allowed_categories")
         for key, value in updates.items():
             setattr(spend_limit, key, value)
         db.commit()
@@ -545,7 +601,7 @@ class FinanceService:
 
         variable_items = self.list_variable_expenses(db, principal if principal.role == ROLE_ORG_OWNER else self._as_org_owner_view(principal))
         for expense in variable_items:
-            if expense.status not in {"approved_by_org_owner", "paid"}:
+            if expense.status not in {"approved_by_dept_head", "approved_by_org_owner", "paid"}:
                 continue
             due_date = expense.expense_date
             priority = "blocked" if expense.payment_status == "paid" else self._priority_for_due_date(due_date, today, end_of_week)
@@ -582,6 +638,11 @@ class FinanceService:
         budgets = self.list_budgets(db, principal)
         expenses = self.list_variable_expenses(db, principal)
         recurring_items = self.list_recurring_expenses(db, principal)
+        visible_priorities = (
+            priorities
+            if principal.role == ROLE_ORG_OWNER
+            else [item for item in priorities if item.expense_type != "recurring"]
+        )
         current_month = date.today().month
         current_year = date.today().year
 
@@ -597,7 +658,7 @@ class FinanceService:
             ),
             Decimal("0"),
         )
-        approved_count = sum(1 for expense in expenses if expense.status in {"approved_by_org_owner", "paid"})
+        approved_count = sum(1 for expense in expenses if expense.status in {"approved_by_dept_head", "approved_by_org_owner", "paid"})
         rejected_count = sum(1 for expense in expenses if "rejected" in expense.status)
         pending_count = sum(1 for expense in expenses if expense.status in {"pending_dept_head", "forwarded_to_org_owner"})
 
@@ -624,7 +685,7 @@ class FinanceService:
         cash_out_week = sum(
             (
                 self._priority_amount(db, principal.organization_id, item.expense_type, item.expense_id)
-                for item in priorities
+                for item in visible_priorities
                 if item.due_date and item.due_date <= this_week and item.priority in {"pay_now", "pay_this_week"}
             ),
             Decimal("0"),
@@ -632,7 +693,7 @@ class FinanceService:
         cash_out_month = sum(
             (
                 self._priority_amount(db, principal.organization_id, item.expense_type, item.expense_id)
-                for item in priorities
+                for item in visible_priorities
                 if item.due_date and item.due_date.month == current_month and item.due_date.year == current_year
             ),
             Decimal("0"),
@@ -671,20 +732,20 @@ class FinanceService:
                 due_date=item.due_date,
                 estimated_cash_out_date=item.estimated_cash_out_date,
             )
-            for item in priorities
+            for item in visible_priorities
         ]
         return DashboardOut(
             organization_name=principal.organization_name,
             role=principal.role,
-            total_spend_this_month=total_variable + total_recurring,
-            recurring_spend_this_month=total_recurring,
+            total_spend_this_month=total_variable + (total_recurring if principal.role == ROLE_ORG_OWNER else Decimal("0")),
+            recurring_spend_this_month=total_recurring if principal.role == ROLE_ORG_OWNER else Decimal("0"),
             variable_spend_this_month=total_variable,
             pending_approvals=pending_count,
             approved_expenses=approved_count,
             rejected_expenses=rejected_count,
             company_budget_used=total_budget_used,
             company_budget_remaining=max(total_budget - total_budget_used, Decimal("0")),
-            upcoming_payment_count=len(priorities),
+            upcoming_payment_count=len(visible_priorities),
             cash_outflow_this_week=cash_out_week,
             cash_outflow_this_month=cash_out_month,
             budgets=budget_outs,
@@ -732,7 +793,7 @@ class FinanceService:
             (
                 expense.amount
                 for expense in budget.expenses
-                if expense.status in {"approved_by_org_owner", "paid"}
+                if expense.status in {"approved_by_dept_head", "approved_by_org_owner", "paid"}
                 and budget.start_date <= expense.expense_date <= budget.end_date
             ),
             Decimal("0"),
@@ -808,13 +869,13 @@ class FinanceService:
             db.flush()
         return vendor.id
 
-    def _evaluate_spend_limits(
+    def _evaluate_spend_limit_policy(
         self,
         db: Session,
         principal: AuthenticatedPrincipal,
         amount: Decimal,
         category: str | None,
-    ) -> SpendLimit | None:
+    ) -> SpendLimitPolicy:
         limits = (
             db.query(SpendLimit)
             .filter(
@@ -823,21 +884,33 @@ class FinanceService:
             )
             .all()
         )
-        applicable: list[SpendLimit] = []
-        for item in limits:
-            if item.user_id and item.user_id != principal.user_id:
-                continue
-            if item.department_id and item.department_id != principal.department_id:
-                continue
-            if item.category and item.category != category:
-                continue
-            applicable.append(item)
-        for item in applicable:
-            if item.allowed_categories_json and category and category not in item.allowed_categories_json:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Category is not allowed by spend limits")
-            if item.max_single_expense_amount is not None and amount > item.max_single_expense_amount:
-                return item
-        return applicable[0] if applicable else None
+        company_thresholds = [
+            item.requires_approval_above_amount
+            for item in limits
+            if item.department_id is None and item.category is None and item.requires_approval_above_amount is not None
+        ]
+        company_threshold = min(company_thresholds) if company_thresholds else None
+
+        applicable = [
+            item
+            for item in limits
+            if (item.department_id is None or item.department_id == principal.department_id)
+            and (item.category is None or item.category == category)
+        ]
+        applicable.sort(key=lambda item: (item.department_id is None, item.category is None))
+
+        matched_limit = applicable[0] if applicable else None
+        requires_org_owner_review = bool(company_threshold is not None and amount > company_threshold)
+        if matched_limit and matched_limit.max_single_expense_amount is not None and amount > matched_limit.max_single_expense_amount:
+            requires_org_owner_review = True
+        if matched_limit and matched_limit.variable_requires_org_owner:
+            requires_org_owner_review = True
+
+        return SpendLimitPolicy(
+            matched_limit=matched_limit,
+            requires_org_owner_review=requires_org_owner_review,
+            company_threshold=company_threshold,
+        )
 
     def _as_org_owner_view(self, principal: AuthenticatedPrincipal) -> AuthenticatedPrincipal:
         return AuthenticatedPrincipal(

@@ -136,3 +136,131 @@ def test_recurring_request_and_payment_priorities() -> None:
     priorities = client.get("/api/finance/payment-priorities", headers=owner_headers)
     assert priorities.status_code == 200
     assert len(priorities.json()["data"]) >= 1
+
+
+def test_company_threshold_and_department_approval_flow() -> None:
+    client = get_client()
+    tenant_id = "tenant-threshold"
+    owner_headers = _auth_header(client, "owner3@example.com", "org_owner", tenant_id)
+    employee_headers = _auth_header(client, "employee3@example.com", "employee", tenant_id)
+    dept_headers = _auth_header(client, "head3@example.com", "employee", tenant_id)
+
+    departments = client.get("/api/admin/departments", headers=owner_headers).json()["data"]
+    finance_department = next(item for item in departments if item["name"] == "IT")
+    members = client.get("/api/admin/members", headers=owner_headers).json()["data"]
+    employee_member = next(item for item in members if item["user"]["email"] == "employee3@example.com")
+    dept_member = next(item for item in members if item["user"]["email"] == "head3@example.com")
+    client.patch(f"/api/admin/members/{employee_member['id']}", headers=owner_headers, json={"department_id": finance_department["id"]})
+    client.patch(
+        f"/api/admin/members/{dept_member['id']}",
+        headers=owner_headers,
+        json={"department_id": finance_department["id"], "role": "dept_head"},
+    )
+
+    categories = client.get("/api/finance/categories", headers=owner_headers).json()["data"]
+    category_id = categories[0]["id"]
+    category_name = categories[0]["name"]
+
+    threshold = client.post(
+        "/api/finance/spend-limits",
+        headers=owner_headers,
+        json={
+            "requires_approval_above_amount": "2000.00",
+            "active": True,
+        },
+    )
+    assert threshold.status_code == 200
+
+    department_rule = client.post(
+        "/api/finance/spend-limits",
+        headers=owner_headers,
+        json={
+            "department_id": finance_department["id"],
+            "category": category_name,
+            "monthly_limit": "25000.00",
+            "active": True,
+        },
+    )
+    assert department_rule.status_code == 200
+
+    low_expense = client.post(
+        "/api/finance/expenses/variable",
+        headers=employee_headers,
+        json={
+            "title": "Taxi ride",
+            "vendor_name": "City Cab",
+            "category_id": category_id,
+            "currency": "INR",
+            "amount": "1200.00",
+            "expense_date": "2026-07-10",
+            "description": "Client meeting travel",
+        },
+    )
+    assert low_expense.status_code == 200
+    assert low_expense.json()["data"]["status"] == "pending_dept_head"
+    assert low_expense.json()["data"]["policy_status"] == "needs_dept_head_review"
+
+    low_expense_id = low_expense.json()["data"]["id"]
+    low_approved = client.post(
+        f"/api/finance/expenses/{low_expense_id}/approve",
+        headers=dept_headers,
+        json={"comment": "Within department policy"},
+    )
+    assert low_approved.status_code == 200
+    assert low_approved.json()["data"]["status"] == "approved_by_dept_head"
+
+    high_expense = client.post(
+        "/api/finance/expenses/variable",
+        headers=employee_headers,
+        json={
+            "title": "Monitor purchase",
+            "vendor_name": "Office Hub",
+            "category_id": category_id,
+            "currency": "INR",
+            "amount": "4200.00",
+            "expense_date": "2026-07-12",
+            "description": "Desk setup",
+        },
+    )
+    assert high_expense.status_code == 200
+    assert high_expense.json()["data"]["status"] == "pending_dept_head"
+    assert high_expense.json()["data"]["policy_status"] == "needs_org_owner_review"
+
+    high_expense_id = high_expense.json()["data"]["id"]
+    forwarded = client.post(
+        f"/api/finance/expenses/{high_expense_id}/approve",
+        headers=dept_headers,
+        json={"comment": "Crosses company threshold"},
+    )
+    assert forwarded.status_code == 200
+    assert forwarded.json()["data"]["status"] == "forwarded_to_org_owner"
+
+
+def test_owner_can_cancel_recurring_expense() -> None:
+    client = get_client()
+    tenant_id = "tenant-cancel"
+    owner_headers = _auth_header(client, "owner4@example.com", "org_owner", tenant_id)
+
+    created = client.post(
+        "/api/finance/recurring-expenses",
+        headers=owner_headers,
+        json={
+            "name": "Payroll processor",
+            "vendor_name": "Payroll Cloud",
+            "category": "Operations",
+            "amount": "9000.00",
+            "currency": "INR",
+            "billing_cycle": "monthly",
+            "priority": "pay_this_week",
+        },
+    )
+    assert created.status_code == 200
+    recurring_id = created.json()["data"]["id"]
+
+    cancelled = client.post(
+        f"/api/finance/recurring-expenses/{recurring_id}/cancel",
+        headers=owner_headers,
+        json={"comment": "Service no longer needed"},
+    )
+    assert cancelled.status_code == 200
+    assert cancelled.json()["data"]["status"] == "cancelled"

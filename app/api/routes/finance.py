@@ -149,6 +149,16 @@ def update_recurring_expense(
     return APIEnvelope(data=_to_recurring_out(finance_service.update_recurring_expense(db, principal, recurring_id, payload)))
 
 
+@router.post("/recurring-expenses/{recurring_id}/cancel", response_model=APIEnvelope[RecurringExpenseOut])
+def cancel_recurring_expense(
+    recurring_id: str,
+    payload: ExpenseActionRequest,
+    principal=Depends(get_current_principal),
+    db: Session = Depends(get_db),
+) -> APIEnvelope[RecurringExpenseOut]:
+    return APIEnvelope(data=_to_recurring_out(finance_service.cancel_recurring_expense(db, principal, recurring_id, payload)))
+
+
 @router.get("/recurring-expense-requests", response_model=APIEnvelope[list[RecurringExpenseRequestOut]])
 def recurring_expense_requests(
     principal=Depends(get_current_principal),
@@ -308,12 +318,10 @@ def _to_spend_limit_out(item) -> SpendLimitOut:
         max_single_expense_amount=item.max_single_expense_amount,
         monthly_limit=item.monthly_limit,
         requires_approval_above_amount=item.requires_approval_above_amount,
-        allowed_categories=item.allowed_categories_json or [],
         recurring_creation_restricted=item.recurring_creation_restricted,
         variable_requires_org_owner=item.variable_requires_org_owner,
         active=item.active,
         department=item.department,
-        user_id=item.user_id,
         created_at=item.created_at,
         updated_at=item.updated_at,
     )

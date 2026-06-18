@@ -100,7 +100,7 @@ class AIChatService:
             .filter(
                 Expense.organization_id == principal.organization_id,
                 Expense.expense_type == "variable",
-                Expense.status == "approved_by_org_owner",
+                Expense.status.in_(["approved_by_dept_head", "approved_by_org_owner"]),
                 Expense.payment_status != "paid",
             )
             .count()
