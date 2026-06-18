@@ -29,7 +29,7 @@ permissions:
   contents: read
   id-token: write
 
-# Workflow touchpoint retained to allow explicit trigger commits when needed.
+# Workflow touchpoint retained to allow explicit trigger commits when needed. Trigger refresh 2026-06-18.
 env:
   IMAGE_REPOSITORY: ${{ vars.ACR_LOGIN_SERVER }}/spend-control-identity
   GITOPS_REPOSITORY: SpendPilot/spendpilot-gitops
