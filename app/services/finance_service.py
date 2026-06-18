@@ -28,6 +28,7 @@ from app.models import (
 from app.schemas.finance import (
     BudgetCreateRequest,
     BudgetOut,
+    BudgetUpdateRequest,
     CategorySpendOut,
     DashboardOut,
     DepartmentSpendOut,
@@ -75,23 +76,32 @@ class FinanceService:
 
     def create_budget(self, db: Session, principal: AuthenticatedPrincipal, payload: BudgetCreateRequest) -> Budget:
         self._require_org_owner(principal)
-        department_id = self._validate_department(db, principal, payload.department_id) if payload.department_id else None
-        category_id = self._validate_category(db, principal, payload.category_id) if payload.category_id else None
+        normalized = self._normalize_budget_payload(db, principal, payload)
+        self._validate_budget_hierarchy(
+            db,
+            principal,
+            scope=normalized["scope"],
+            department_id=normalized["department_id"],
+            currency=normalized["currency"],
+            amount=normalized["amount"],
+            month=normalized["month"],
+            year=normalized["year"],
+        )
         start_date = date(payload.year, payload.month, 1)
         end_date = date(payload.year, payload.month, monthrange(payload.year, payload.month)[1])
         budget = Budget(
             organization_id=principal.organization_id,
-            department_id=department_id,
-            category_id=category_id,
-            name=payload.name,
-            scope=payload.scope,
-            currency=payload.currency,
-            amount=payload.amount,
-            month=payload.month,
-            year=payload.year,
+            department_id=normalized["department_id"],
+            category_id=normalized["category_id"],
+            name=normalized["name"],
+            scope=normalized["scope"],
+            currency=normalized["currency"],
+            amount=normalized["amount"],
+            month=normalized["month"],
+            year=normalized["year"],
             start_date=start_date,
             end_date=end_date,
-            alert_threshold_percent=payload.alert_threshold_percent,
+            alert_threshold_percent=normalized["alert_threshold_percent"],
         )
         db.add(budget)
         db.commit()
@@ -106,6 +116,78 @@ class FinanceService:
             details={"name": budget.name, "scope": budget.scope, "amount": str(budget.amount)},
         )
         return budget
+
+    def update_budget(
+        self,
+        db: Session,
+        principal: AuthenticatedPrincipal,
+        budget_id: str,
+        payload: BudgetUpdateRequest,
+    ) -> Budget:
+        self._require_org_owner(principal)
+        budget = self._get_budget(db, principal, budget_id)
+        updates = payload.model_dump(exclude_unset=True)
+        merged_payload = BudgetCreateRequest(
+            name=updates.get("name", budget.name),
+            scope=updates.get("scope", budget.scope),
+            department_id=updates.get("department_id", budget.department_id),
+            category_id=updates.get("category_id", budget.category_id),
+            currency=updates.get("currency", budget.currency),
+            amount=updates.get("amount", budget.amount),
+            month=updates.get("month", budget.month),
+            year=updates.get("year", budget.year),
+            alert_threshold_percent=updates.get("alert_threshold_percent", budget.alert_threshold_percent),
+        )
+        normalized = self._normalize_budget_payload(db, principal, merged_payload)
+        self._validate_budget_hierarchy(
+            db,
+            principal,
+            scope=normalized["scope"],
+            department_id=normalized["department_id"],
+            currency=normalized["currency"],
+            amount=normalized["amount"],
+            month=normalized["month"],
+            year=normalized["year"],
+            budget_id=budget.id,
+        )
+        budget.department_id = normalized["department_id"]
+        budget.category_id = normalized["category_id"]
+        budget.name = normalized["name"]
+        budget.scope = normalized["scope"]
+        budget.currency = normalized["currency"]
+        budget.amount = normalized["amount"]
+        budget.month = normalized["month"]
+        budget.year = normalized["year"]
+        budget.start_date = date(normalized["year"], normalized["month"], 1)
+        budget.end_date = date(normalized["year"], normalized["month"], monthrange(normalized["year"], normalized["month"])[1])
+        budget.alert_threshold_percent = normalized["alert_threshold_percent"]
+        db.commit()
+        db.refresh(budget)
+        create_audit_event(
+            db,
+            organization_id=principal.organization_id,
+            actor_user_id=principal.user_id,
+            resource_type="budget",
+            resource_id=budget.id,
+            action="updated",
+            details={"name": budget.name, "scope": budget.scope, "amount": str(budget.amount)},
+        )
+        return budget
+
+    def delete_budget(self, db: Session, principal: AuthenticatedPrincipal, budget_id: str) -> None:
+        self._require_org_owner(principal)
+        budget = self._get_budget(db, principal, budget_id)
+        create_audit_event(
+            db,
+            organization_id=principal.organization_id,
+            actor_user_id=principal.user_id,
+            resource_type="budget",
+            resource_id=budget.id,
+            action="deleted",
+            details={"name": budget.name, "scope": budget.scope, "amount": str(budget.amount)},
+        )
+        db.delete(budget)
+        db.commit()
 
     def list_variable_expenses(self, db: Session, principal: AuthenticatedPrincipal) -> list[Expense]:
         query = (
@@ -798,6 +880,122 @@ class FinanceService:
             ),
             Decimal("0"),
         )
+
+    def _get_budget(self, db: Session, principal: AuthenticatedPrincipal, budget_id: str) -> Budget:
+        budget = (
+            db.query(Budget)
+            .options(joinedload(Budget.category), joinedload(Budget.department), joinedload(Budget.expenses))
+            .filter(Budget.id == budget_id, Budget.organization_id == principal.organization_id)
+            .first()
+        )
+        if budget is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Budget not found")
+        return budget
+
+    def _normalize_budget_payload(self, db: Session, principal: AuthenticatedPrincipal, payload: BudgetCreateRequest) -> dict:
+        scope = payload.scope.strip().lower()
+        if scope not in {"company", "department"}:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Budget scope must be company or department")
+        department_id = self._validate_department(db, principal, payload.department_id) if payload.department_id else None
+        if scope == "department" and not department_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Department budget requires a department")
+        if scope == "company":
+            department_id = None
+        if payload.month < 1 or payload.month > 12:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Budget month must be between 1 and 12")
+        if payload.year < 2000 or payload.year > 2100:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Budget year is out of range")
+        return {
+            "name": payload.name.strip(),
+            "scope": scope,
+            "department_id": department_id,
+            "category_id": None,
+            "currency": payload.currency.upper(),
+            "amount": payload.amount,
+            "month": payload.month,
+            "year": payload.year,
+            "alert_threshold_percent": payload.alert_threshold_percent,
+        }
+
+    def _validate_budget_hierarchy(
+        self,
+        db: Session,
+        principal: AuthenticatedPrincipal,
+        scope: str,
+        department_id: str | None,
+        currency: str,
+        amount: Decimal,
+        month: int,
+        year: int,
+        budget_id: str | None = None,
+    ) -> None:
+        company_budgets_query = db.query(Budget).filter(
+            Budget.organization_id == principal.organization_id,
+            Budget.scope == "company",
+            Budget.currency == currency,
+            Budget.month == month,
+            Budget.year == year,
+        )
+        if budget_id:
+            company_budgets_query = company_budgets_query.filter(Budget.id != budget_id)
+
+        if scope == "company":
+            if company_budgets_query.first() is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="A company budget already exists for this month, year, and currency",
+                )
+            assigned_department_sum = (
+                db.query(func.coalesce(func.sum(Budget.amount), 0))
+                .filter(
+                    Budget.organization_id == principal.organization_id,
+                    Budget.scope == "department",
+                    Budget.currency == currency,
+                    Budget.month == month,
+                    Budget.year == year,
+                )
+                .scalar()
+            )
+            if Decimal(str(assigned_department_sum or 0)) > amount:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Company budget cannot be lower than the total department budgets already assigned",
+                )
+            return
+
+        company_budget = (
+            db.query(Budget)
+            .filter(
+                Budget.organization_id == principal.organization_id,
+                Budget.scope == "company",
+                Budget.currency == currency,
+                Budget.month == month,
+                Budget.year == year,
+            )
+            .first()
+        )
+        if company_budget is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Create the company budget for this month first before assigning department budgets",
+            )
+        existing_department_sum = (
+            db.query(func.coalesce(func.sum(Budget.amount), 0))
+            .filter(
+                Budget.organization_id == principal.organization_id,
+                Budget.scope == "department",
+                Budget.currency == currency,
+                Budget.month == month,
+                Budget.year == year,
+                Budget.id != budget_id if budget_id else True,
+            )
+            .scalar()
+        )
+        if Decimal(str(existing_department_sum or 0)) + amount > company_budget.amount:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Department budgets cannot exceed the company budget for this month",
+            )
 
     def _validate_category(self, db: Session, principal: AuthenticatedPrincipal, category_id: str) -> str:
         category = self._get_category(db, principal.organization_id, category_id)

@@ -38,6 +38,21 @@ def test_budget_variable_expense_and_approval_flow() -> None:
     categories = client.get("/api/finance/categories", headers=owner_headers)
     category_id = categories.json()["data"][0]["id"]
 
+    company_budget = client.post(
+        "/api/finance/budgets",
+        headers=owner_headers,
+        json={
+            "name": "Company July Budget",
+            "scope": "company",
+            "currency": "INR",
+            "amount": "100000.00",
+            "month": 7,
+            "year": 2026,
+            "alert_threshold_percent": 80,
+        },
+    )
+    assert company_budget.status_code == 200
+
     budget = client.post(
         "/api/finance/budgets",
         headers=owner_headers,
@@ -45,7 +60,6 @@ def test_budget_variable_expense_and_approval_flow() -> None:
             "name": "IT July Budget",
             "scope": "department",
             "department_id": it_department["id"],
-            "category_id": category_id,
             "currency": "INR",
             "amount": "50000.00",
             "month": 7,
@@ -87,6 +101,86 @@ def test_budget_variable_expense_and_approval_flow() -> None:
     )
     assert approved.status_code == 200
     assert approved.json()["data"]["status"] == "approved_by_org_owner"
+
+
+def test_budget_hierarchy_edit_and_delete() -> None:
+    client = get_client()
+    tenant_id = "tenant-budget-rules"
+    owner_headers = _auth_header(client, "owner-budget@example.com", "org_owner", tenant_id)
+
+    departments = client.get("/api/admin/departments", headers=owner_headers).json()["data"]
+    it_department = next(item for item in departments if item["name"] == "IT")
+    hr_department = next(item for item in departments if item["name"] == "HR")
+
+    company_budget = client.post(
+        "/api/finance/budgets",
+        headers=owner_headers,
+        json={
+            "name": "Company August Budget",
+            "scope": "company",
+            "currency": "INR",
+            "amount": "100000.00",
+            "month": 8,
+            "year": 2026,
+            "alert_threshold_percent": 80,
+        },
+    )
+    assert company_budget.status_code == 200
+    company_budget_id = company_budget.json()["data"]["id"]
+
+    first_department_budget = client.post(
+        "/api/finance/budgets",
+        headers=owner_headers,
+        json={
+            "name": "IT August Budget",
+            "scope": "department",
+            "department_id": it_department["id"],
+            "currency": "INR",
+            "amount": "60000.00",
+            "month": 8,
+            "year": 2026,
+            "alert_threshold_percent": 80,
+        },
+    )
+    assert first_department_budget.status_code == 200
+    department_budget_id = first_department_budget.json()["data"]["id"]
+
+    too_much = client.post(
+        "/api/finance/budgets",
+        headers=owner_headers,
+        json={
+            "name": "HR August Budget",
+            "scope": "department",
+            "department_id": hr_department["id"],
+            "currency": "INR",
+            "amount": "50000.00",
+            "month": 8,
+            "year": 2026,
+            "alert_threshold_percent": 80,
+        },
+    )
+    assert too_much.status_code == 400
+    assert "cannot exceed the company budget" in too_much.json()["detail"]
+
+    updated_department_budget = client.patch(
+        f"/api/finance/budgets/{department_budget_id}",
+        headers=owner_headers,
+        json={"amount": "55000.00"},
+    )
+    assert updated_department_budget.status_code == 200
+    assert updated_department_budget.json()["data"]["amount"] == "55000.00"
+
+    lowered_company = client.patch(
+        f"/api/finance/budgets/{company_budget_id}",
+        headers=owner_headers,
+        json={"amount": "50000.00"},
+    )
+    assert lowered_company.status_code == 400
+    assert "cannot be lower than the total department budgets" in lowered_company.json()["detail"]
+
+    deleted = client.delete(f"/api/finance/budgets/{department_budget_id}", headers=owner_headers)
+    assert deleted.status_code == 200
+    assert deleted.json()["data"]["status"] == "deleted"
 
 
 def test_recurring_request_and_payment_priorities() -> None:

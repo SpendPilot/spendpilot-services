@@ -43,6 +43,18 @@ class BudgetCreateRequest(BaseModel):
     alert_threshold_percent: int = 80
 
 
+class BudgetUpdateRequest(BaseModel):
+    name: str | None = None
+    scope: str | None = None
+    department_id: str | None = None
+    category_id: str | None = None
+    currency: str | None = None
+    amount: Decimal | None = None
+    month: int | None = None
+    year: int | None = None
+    alert_threshold_percent: int | None = None
+
+
 class BudgetOut(BaseModel):
     id: str
     name: str

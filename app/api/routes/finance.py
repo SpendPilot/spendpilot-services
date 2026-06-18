@@ -10,6 +10,7 @@ from app.schemas.finance import (
     AuditEventOut,
     BudgetCreateRequest,
     BudgetOut,
+    BudgetUpdateRequest,
     DashboardOut,
     ExpenseActionRequest,
     ExpenseCategoryOut,
@@ -58,6 +59,27 @@ def create_budget(
 ) -> APIEnvelope[BudgetOut]:
     budget = finance_service.create_budget(db, principal, payload)
     return APIEnvelope(data=_to_budget_out(budget, finance_service._budget_consumed(budget)))
+
+
+@router.patch("/budgets/{budget_id}", response_model=APIEnvelope[BudgetOut])
+def update_budget(
+    budget_id: str,
+    payload: BudgetUpdateRequest,
+    principal=Depends(get_current_principal),
+    db: Session = Depends(get_db),
+) -> APIEnvelope[BudgetOut]:
+    budget = finance_service.update_budget(db, principal, budget_id, payload)
+    return APIEnvelope(data=_to_budget_out(budget, finance_service._budget_consumed(budget)))
+
+
+@router.delete("/budgets/{budget_id}", response_model=APIEnvelope[dict[str, str]])
+def delete_budget(
+    budget_id: str,
+    principal=Depends(get_current_principal),
+    db: Session = Depends(get_db),
+) -> APIEnvelope[dict[str, str]]:
+    finance_service.delete_budget(db, principal, budget_id)
+    return APIEnvelope(data={"status": "deleted"})
 
 
 @router.get("/expenses", response_model=APIEnvelope[ExpenseWorkspaceOut])
