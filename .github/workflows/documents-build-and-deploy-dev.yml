@@ -1,19 +1,28 @@
-name: Finance Service CI and Publish to ACR
+name: Documents Build and Deploy Dev
 
 on:
   push:
     branches:
       - main
     paths:
-      - ".github/workflows/finance-docker-publish.yml"
-      - "services/finance/**"
+      - ".github/workflows/documents-build-and-deploy-dev.yml"
+      - ".github/workflows/documents-promote-staging.yml"
+      - ".github/workflows/documents-promote-prod.yml"
+      - "services/documents/**"
       - "app/core/**"
       - "app/db/**"
       - "app/models/**"
       - "app/api/routes/health.py"
-      - "app/api/routes/finance.py"
+      - "app/api/routes/documents.py"
+      - "app/api/routes/ai.py"
       - "app/schemas/common.py"
-      - "app/schemas/finance.py"
+      - "app/schemas/documents.py"
+      - "app/schemas/ai.py"
+      - "app/services/document_service.py"
+      - "app/services/ai_foundry_service.py"
+      - "app/services/ai_chat_service.py"
+      - "app/services/storage_service.py"
+      - "app/services/policy_service.py"
       - "app/services/finance_service.py"
       - "app/services/audit_service.py"
       - "app/main.py"
@@ -22,22 +31,22 @@ on:
       - "pyproject.toml"
       - ".dockerignore"
       - ".env.example"
-
   workflow_dispatch:
 
 permissions:
   contents: read
   id-token: write
 
-# Workflow touchpoint retained to allow explicit trigger commits when needed. Trigger refresh 2026-06-18.
 env:
-  IMAGE_REPOSITORY: ${{ vars.ACR_LOGIN_SERVER }}/spend-control-finance
+  ACR_NAME: ${{ vars.ACR_NAME }}
+  ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
+  IMAGE_REPOSITORY: ${{ vars.ACR_LOGIN_SERVER }}/spend-control-documents
   GITOPS_REPOSITORY: SpendPilot/spendpilot-gitops
-  GITOPS_VALUES_FILE: environments/prod/values/spendpilot-values.yaml
+  DEV_VALUES_FILE: environments/dev/values/spendpilot-values.yaml
 
 jobs:
-  validate:
-    name: Lint, Test and Build
+  build-and-deploy-dev:
+    name: Build Once and Update Dev GitOps
     runs-on: ubuntu-latest
 
     steps:
@@ -65,33 +74,23 @@ jobs:
       - name: Build package
         run: python -m build
 
-  docker:
-    name: Build and Push Image
-    runs-on: ubuntu-latest
-    needs: validate
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
       - name: Log in to Azure using GitHub OIDC
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Log in to Azure Container Registry
-        run: |
-          az acr login --name "${{ vars.ACR_NAME }}"
+        run: az acr login --name "$ACR_NAME"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Compute image tag
         id: vars
-        run: |
-          echo "image_tag=${GITHUB_SHA: -7}" >> "$GITHUB_OUTPUT"
+        run: echo "image_tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+        shell: bash
 
       - name: Extract Docker metadata
         id: meta
@@ -101,16 +100,17 @@ jobs:
           tags: |
             type=raw,value=${{ steps.vars.outputs.image_tag }}
           labels: |
-            org.opencontainers.image.title=SpendPilot Finance Service
-            org.opencontainers.image.description=SpendPilot finance service container image
+            org.opencontainers.image.title=SpendPilot Documents Service
+            org.opencontainers.image.description=SpendPilot documents service container image
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
 
-      - name: Build and push finance image
+      - name: Build and push documents image
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./services/finance/Dockerfile
+          file: ./services/documents/Dockerfile
           push: true
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
@@ -118,10 +118,15 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Show published image
+      - name: Validate published digest
         run: |
-          echo "Published image:"
-          echo "${{ env.IMAGE_REPOSITORY }}:${{ steps.vars.outputs.image_tag }}"
+          if [[ ! "${IMAGE_DIGEST}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "Invalid or missing image digest: ${IMAGE_DIGEST}"
+            exit 1
+          fi
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
 
       - name: Install yq
         run: |
@@ -136,26 +141,33 @@ jobs:
           token: ${{ secrets.GITOPS_REPO_TOKEN }}
           path: gitops
 
-      - name: Update production finance image tag
+      - name: Update dev documents image values
         working-directory: gitops
+        env:
+          IMAGE_REPOSITORY: ${{ env.IMAGE_REPOSITORY }}
+          IMAGE_TAG: ${{ steps.vars.outputs.image_tag }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
         run: |
-          yq -i '.financeService.image.tag = strenv(IMAGE_TAG)' "${{ env.GITOPS_VALUES_FILE }}"
+          test -f "$DEV_VALUES_FILE"
+          yq -i '.documentsService.image.repository = strenv(IMAGE_REPOSITORY)' "$DEV_VALUES_FILE"
+          yq -i '.documentsService.image.tag = strenv(IMAGE_TAG)' "$DEV_VALUES_FILE"
+          yq -i '.documentsService.image.digest = strenv(IMAGE_DIGEST)' "$DEV_VALUES_FILE"
+        shell: bash
+
+      - name: Commit and push dev GitOps update
+        working-directory: gitops
         env:
           IMAGE_TAG: ${{ steps.vars.outputs.image_tag }}
-
-      - name: Commit and push GitOps promotion
-        working-directory: gitops
         run: |
-          if git diff --quiet -- "${{ env.GITOPS_VALUES_FILE }}"; then
+          if git diff --quiet -- "$DEV_VALUES_FILE"; then
             echo "No GitOps changes to commit."
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "${{ env.GITOPS_VALUES_FILE }}"
-          git commit -m "Promote finance image to ${IMAGE_TAG}"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$DEV_VALUES_FILE"
+          git commit -m "[skip ci] chore(dev): deploy documents image ${IMAGE_TAG}"
           git pull --rebase origin main
           git push origin HEAD:main
-        env:
-          IMAGE_TAG: ${{ steps.vars.outputs.image_tag }}
+        shell: bash
