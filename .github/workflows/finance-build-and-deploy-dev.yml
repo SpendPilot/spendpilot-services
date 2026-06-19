@@ -36,6 +36,9 @@ env:
   IMAGE_REPOSITORY: ${{ vars.ACR_LOGIN_SERVER }}/spend-control-finance
   GITOPS_REPOSITORY: SpendPilot/spendpilot-gitops
   DEV_VALUES_FILE: environments/dev/values/spendpilot-values.yaml
+  AZURE_CLIENT_ID_VALUE: ${{ vars.AZURE_CLIENT_ID != '' && vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID_VALUE: ${{ vars.AZURE_TENANT_ID != '' && vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID_VALUE: ${{ vars.AZURE_SUBSCRIPTION_ID != '' && vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
 
 jobs:
   build-and-deploy-dev:
@@ -67,12 +70,28 @@ jobs:
       - name: Build package
         run: python -m build
 
+      - name: Validate Azure OIDC inputs
+        run: |
+          if [[ -z "$AZURE_CLIENT_ID_VALUE" ]]; then
+            echo "Missing AZURE_CLIENT_ID. Set it as a GitHub variable or secret."
+            exit 1
+          fi
+          if [[ -z "$AZURE_TENANT_ID_VALUE" ]]; then
+            echo "Missing AZURE_TENANT_ID. Set it as a GitHub variable or secret."
+            exit 1
+          fi
+          if [[ -z "$AZURE_SUBSCRIPTION_ID_VALUE" ]]; then
+            echo "Missing AZURE_SUBSCRIPTION_ID. Set it as a GitHub variable or secret."
+            exit 1
+          fi
+        shell: bash
+
       - name: Log in to Azure using GitHub OIDC
         uses: azure/login@v2
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ env.AZURE_CLIENT_ID_VALUE }}
+          tenant-id: ${{ env.AZURE_TENANT_ID_VALUE }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID_VALUE }}
 
       - name: Log in to Azure Container Registry
         run: az acr login --name "$ACR_NAME"
