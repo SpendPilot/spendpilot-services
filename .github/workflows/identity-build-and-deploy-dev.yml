@@ -17,6 +17,7 @@ on:
       - "app/api/routes/admin.py"
       - "app/schemas/common.py"
       - "app/schemas/auth.py"
+      - "app/services/email_queue.py"
       - "app/services/user_service.py"
       - "app/main.py"
       - "app/app_factory.py"

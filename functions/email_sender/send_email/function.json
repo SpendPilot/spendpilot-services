@@ -1,0 +1,12 @@
+{
+  "scriptFile": "__init__.py",
+  "bindings": [
+    {
+      "name": "message",
+      "type": "serviceBusTrigger",
+      "direction": "in",
+      "queueName": "%EMAIL_SERVICE_BUS_QUEUE_NAME%",
+      "connection": "SERVICEBUS_CONNECTION"
+    }
+  ]
+}

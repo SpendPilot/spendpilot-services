@@ -1,0 +1,97 @@
+name: Email Function Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/email-function-deploy.yml"
+      - "functions/email_sender/**"
+      - "tests/test_email_notifications.py"
+      - "pyproject.toml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: staging
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AZURE_CLIENT_ID_VALUE: ${{ vars.AZURE_CLIENT_ID != '' && vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID_VALUE: ${{ vars.AZURE_TENANT_ID != '' && vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID_VALUE: ${{ vars.AZURE_SUBSCRIPTION_ID != '' && vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
+
+jobs:
+  deploy:
+    name: Test and Deploy Email Function
+    runs-on: ubuntu-latest
+    env:
+      TARGET_ENV: ${{ github.event_name == 'push' && 'dev' || github.event.inputs.environment }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+          python -m pip install -e .[dev]
+          python -m pip install -r functions/email_sender/requirements.txt
+
+      - name: Run lint
+        run: ruff check .
+
+      - name: Run tests
+        run: pytest
+
+      - name: Validate Azure OIDC inputs
+        run: |
+          if [[ -z "$AZURE_CLIENT_ID_VALUE" ]]; then
+            echo "Missing AZURE_CLIENT_ID. Set it as a GitHub variable or secret."
+            exit 1
+          fi
+          if [[ -z "$AZURE_TENANT_ID_VALUE" ]]; then
+            echo "Missing AZURE_TENANT_ID. Set it as a GitHub variable or secret."
+            exit 1
+          fi
+          if [[ -z "$AZURE_SUBSCRIPTION_ID_VALUE" ]]; then
+            echo "Missing AZURE_SUBSCRIPTION_ID. Set it as a GitHub variable or secret."
+            exit 1
+          fi
+        shell: bash
+
+      - name: Compute target Function App name
+        id: target
+        run: echo "function_app_name=spendpilot-${TARGET_ENV}-email-func" >> "$GITHUB_OUTPUT"
+        shell: bash
+
+      - name: Log in to Azure using GitHub OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID_VALUE }}
+          tenant-id: ${{ env.AZURE_TENANT_ID_VALUE }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID_VALUE }}
+
+      - name: Deploy Azure Function
+        uses: Azure/functions-action@v1
+        with:
+          app-name: ${{ steps.target.outputs.function_app_name }}
+          package: ./functions/email_sender
+          scm-do-build-during-deployment: true
+          enable-oryx-build: true

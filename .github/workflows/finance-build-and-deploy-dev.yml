@@ -18,6 +18,7 @@ on:
       - "app/api/routes/finance.py"
       - "app/schemas/common.py"
       - "app/schemas/finance.py"
+      - "app/services/email_queue.py"
       - "app/services/finance_service.py"
       - "app/services/audit_service.py"
       - "app/main.py"

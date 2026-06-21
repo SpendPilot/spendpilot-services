@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -9,6 +10,9 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.rbac import ROLE_DEPT_HEAD, ROLE_EMPLOYEE, ROLE_ORG_OWNER, ROLE_PLATFORM_ADMIN, derive_highest_role, normalize_role
 from app.models import Department, ExpenseCategory, Organization, OrganizationMembership, User, UserSession
+from app.services.email_queue import EmailQueuePublisher, EmailRequest, EmailTemplateType, get_email_queue_publisher
+
+logger = logging.getLogger(__name__)
 
 MICROSOFT_CONSUMER_TENANT_ID = "9188040d-6c67-4c5b-b112-36a304b66dad"
 
@@ -164,8 +168,10 @@ def sync_user_context_from_claims(
     session_identifier: str,
     auth_provider: str,
     user_agent: str | None,
+    email_queue: EmailQueuePublisher | None = None,
 ) -> AuthContext:
     settings = get_settings()
+    queue = email_queue or get_email_queue_publisher()
     email = payload.get("preferred_username") or payload.get("upn") or payload.get("email")
     if not email:
         raise ValueError("Authenticated token did not include an email address")
@@ -178,6 +184,7 @@ def sync_user_context_from_claims(
     external_id = _external_id_from_claims(payload)
     organization = db.query(Organization).filter(Organization.tenant_id == tenant_id).first()
     user = db.query(User).filter(User.external_id == external_id).first()
+    membership_created = False
     if user is None:
         user = User(
             external_id=external_id,
@@ -233,6 +240,7 @@ def sync_user_context_from_claims(
             onboarding_completed=role == ROLE_ORG_OWNER,
         )
         db.add(membership)
+        membership_created = True
     else:
         normalized_role = normalize_role(membership.role)
         if membership.role != normalized_role:
@@ -273,6 +281,26 @@ def sync_user_context_from_claims(
 
     if session.revoked_at is not None:
         raise ValueError("This session has been revoked")
+
+    if membership_created:
+        try:
+            queue.enqueue(
+                EmailRequest(
+                    type=EmailTemplateType.WELCOME_EMAIL,
+                    to=user.email,
+                    template="welcome-email",
+                    data={
+                        "displayName": user.display_name,
+                        "organizationName": organization.name,
+                        "role": membership.role,
+                    },
+                    correlationId=session.id,
+                    idempotencyKey=f"welcome:{membership.id}",
+                )
+            )
+        except Exception:
+            # Keep auth/bootstrap flows resilient even if async notifications are misconfigured.
+            logger.exception("Failed to enqueue welcome email for membership %s.", membership.id)
 
     return AuthContext(
         user=user,

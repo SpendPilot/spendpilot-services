@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     azure_document_intelligence_endpoint: str = Field(default="", alias="AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT")
     azure_storage_account_url: str = Field(default="", alias="AZURE_STORAGE_ACCOUNT_URL")
     azure_storage_container_name: str = Field(default="", alias="AZURE_STORAGE_CONTAINER_NAME")
+    email_notifications_enabled: bool = Field(default=True, alias="EMAIL_NOTIFICATIONS_ENABLED")
+    azure_service_bus_fully_qualified_namespace: str = Field(
+        default="",
+        alias="AZURE_SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE",
+    )
+    azure_service_bus_queue_name: str = Field(default="", alias="AZURE_SERVICE_BUS_QUEUE_NAME")
+    azure_service_bus_connection_string: str = Field(default="", alias="AZURE_SERVICE_BUS_CONNECTION_STRING")
 
     finance_default_currency: str = Field(default="INR", alias="FINANCE_DEFAULT_CURRENCY")
     local_upload_dir: str = Field(default="./data/uploads", alias="LOCAL_UPLOAD_DIR")
@@ -106,6 +113,17 @@ class Settings(BaseSettings):
     @property
     def foundry_enabled(self) -> bool:
         return bool(self.foundry_openai_base_url and self.azure_ai_model_deployment)
+
+    @property
+    def email_queue_enabled(self) -> bool:
+        if not self.email_notifications_enabled:
+            return False
+        if self.azure_service_bus_connection_string and self.azure_service_bus_queue_name:
+            return True
+        return bool(
+            self.azure_service_bus_fully_qualified_namespace
+            and self.azure_service_bus_queue_name
+        )
 
 
 @lru_cache

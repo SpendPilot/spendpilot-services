@@ -1,0 +1,12 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "SERVICEBUS_CONNECTION__fullyQualifiedNamespace": "spendpilot-dev-sb.servicebus.windows.net",
+    "EMAIL_SERVICE_BUS_QUEUE_NAME": "email-requests",
+    "ACS_EMAIL_CONNECTION_STRING": "",
+    "ACS_EMAIL_ENDPOINT": "",
+    "ACS_EMAIL_SENDER_ADDRESS": "DoNotReply@example.azurecomm.net"
+  }
+}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from calendar import monthrange
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -19,10 +20,12 @@ from app.models import (
     Expense,
     ExpenseApproval,
     ExpenseCategory,
+    OrganizationMembership,
     PaymentPriority,
     RecurringExpense,
     RecurringExpenseRequest,
     SpendLimit,
+    User,
     Vendor,
 )
 from app.schemas.finance import (
@@ -43,6 +46,9 @@ from app.schemas.finance import (
     VariableExpenseCreateRequest,
 )
 from app.services.audit_service import create_audit_event
+from app.services.email_queue import EmailQueuePublisher, EmailRequest, EmailTemplateType, get_email_queue_publisher
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -53,6 +59,9 @@ class SpendLimitPolicy:
 
 
 class FinanceService:
+    def __init__(self, email_queue: EmailQueuePublisher | None = None) -> None:
+        self.email_queue = email_queue or get_email_queue_publisher()
+
     def list_categories(self, db: Session, principal: AuthenticatedPrincipal) -> list[ExpenseCategory]:
         return (
             db.query(ExpenseCategory)
@@ -292,6 +301,7 @@ class FinanceService:
             action="created",
             details={"title": expense.title, "amount": str(expense.amount), "status": expense.status},
         )
+        self._notify_variable_expense_submitted(db, principal, expense)
         return expense
 
     def review_variable_expense(
@@ -363,6 +373,7 @@ class FinanceService:
             action=action,
             details={"status": expense.status},
         )
+        self._notify_variable_expense_reviewed(db, principal, expense, action)
         return expense
 
     def list_recurring_expenses(self, db: Session, principal: AuthenticatedPrincipal) -> list[RecurringExpense]:
@@ -1062,6 +1073,145 @@ class FinanceService:
     def _require_org_owner(self, principal: AuthenticatedPrincipal) -> None:
         if principal.role != ROLE_ORG_OWNER:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organization owner access required")
+
+    def _notify_variable_expense_submitted(
+        self,
+        db: Session,
+        principal: AuthenticatedPrincipal,
+        expense: Expense,
+    ) -> None:
+        recipient_emails = self._approval_recipient_emails(db, principal.organization_id, expense)
+        if not recipient_emails:
+            logger.info("No approval recipients found for expense %s; skipping submission email.", expense.id)
+            return
+
+        requests = [
+            EmailRequest(
+                type=EmailTemplateType.EXPENSE_SUBMITTED,
+                to=recipient_email,
+                template="expense-submitted",
+                data=self._expense_email_data(principal, expense),
+                correlationId=expense.id,
+                idempotencyKey=f"expense-submitted:{expense.id}:{recipient_email}",
+            )
+            for recipient_email in recipient_emails
+        ]
+        self._enqueue_email_requests(requests)
+
+    def _notify_variable_expense_reviewed(
+        self,
+        db: Session,
+        principal: AuthenticatedPrincipal,
+        expense: Expense,
+        action: str,
+    ) -> None:
+        if expense.status == "forwarded_to_org_owner":
+            recipient_emails = self._list_active_member_emails(
+                db,
+                expense.organization_id,
+                role=ROLE_ORG_OWNER,
+            )
+            requests = [
+                EmailRequest(
+                    type=EmailTemplateType.EXPENSE_SUBMITTED,
+                    to=recipient_email,
+                    template="expense-submitted",
+                    data=self._expense_email_data(principal, expense),
+                    correlationId=expense.id,
+                    idempotencyKey=f"expense-forwarded:{expense.id}:{recipient_email}",
+                )
+                for recipient_email in recipient_emails
+            ]
+            self._enqueue_email_requests(requests)
+            return
+
+        submitter = db.query(User).filter(User.id == expense.submitted_by_user_id).first()
+        if submitter is None:
+            logger.info("Submitter not found for expense %s; skipping review email.", expense.id)
+            return
+
+        if "approved" in expense.status:
+            request = EmailRequest(
+                type=EmailTemplateType.EXPENSE_APPROVED,
+                to=submitter.email,
+                template="expense-approved",
+                data=self._expense_email_data(principal, expense),
+                correlationId=expense.id,
+                idempotencyKey=f"expense-approved:{expense.id}:{submitter.email}:{action}",
+            )
+            self._enqueue_email_requests([request])
+            return
+
+        if "rejected" in expense.status:
+            request = EmailRequest(
+                type=EmailTemplateType.EXPENSE_REJECTED,
+                to=submitter.email,
+                template="expense-rejected",
+                data=self._expense_email_data(principal, expense),
+                correlationId=expense.id,
+                idempotencyKey=f"expense-rejected:{expense.id}:{submitter.email}:{action}",
+            )
+            self._enqueue_email_requests([request])
+
+    def _approval_recipient_emails(self, db: Session, organization_id: str, expense: Expense) -> list[str]:
+        if expense.status == "forwarded_to_org_owner":
+            return self._list_active_member_emails(db, organization_id, role=ROLE_ORG_OWNER)
+        if expense.department_id:
+            emails = self._list_active_member_emails(
+                db,
+                organization_id,
+                role=ROLE_DEPT_HEAD,
+                department_id=expense.department_id,
+            )
+            if emails:
+                return emails
+        return self._list_active_member_emails(db, organization_id, role=ROLE_ORG_OWNER)
+
+    def _list_active_member_emails(
+        self,
+        db: Session,
+        organization_id: str,
+        *,
+        role: str | None = None,
+        department_id: str | None = None,
+    ) -> list[str]:
+        query = (
+            db.query(User.email)
+            .join(OrganizationMembership, OrganizationMembership.user_id == User.id)
+            .filter(
+                OrganizationMembership.organization_id == organization_id,
+                OrganizationMembership.status == "active",
+            )
+        )
+        if role is not None:
+            query = query.filter(OrganizationMembership.role == role)
+        if department_id is not None:
+            query = query.filter(OrganizationMembership.department_id == department_id)
+        return [email for (email,) in query.distinct().all()]
+
+    def _expense_email_data(self, principal: AuthenticatedPrincipal, expense: Expense) -> dict[str, str]:
+        return {
+            "organizationName": principal.organization_name,
+            "expenseId": expense.id,
+            "title": expense.title,
+            "amount": str(expense.amount),
+            "currency": expense.currency,
+            "status": expense.status,
+            "policyStatus": expense.policy_status,
+            "expenseDate": expense.expense_date.isoformat(),
+            "submittedByEmail": expense.submitted_by.email if expense.submitted_by else principal.email,
+            "reviewedByEmail": principal.email,
+            "rejectionReason": expense.rejection_reason or "",
+            "departmentName": expense.department.name if expense.department else "",
+        }
+
+    def _enqueue_email_requests(self, requests: list[EmailRequest]) -> None:
+        if not requests:
+            return
+        try:
+            self.email_queue.enqueue_many(requests)
+        except Exception:
+            logger.exception("Failed to enqueue %s email request(s).", len(requests))
 
     def _find_or_create_vendor(self, db: Session, organization_id: str, vendor_name: str | None, category: str | None) -> str | None:
         if not vendor_name:
