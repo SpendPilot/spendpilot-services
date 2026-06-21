@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from dataclasses import dataclass
@@ -117,7 +118,18 @@ def _build_unique_org_slug(db: Session, org_name: str, tenant_id: str) -> str:
     existing = db.query(Organization).filter(Organization.slug == base_slug).first()
     if existing is None:
         return base_slug
-    return _slugify(f"{org_name}-{tenant_id[:8]}")
+
+    tenant_suffix = hashlib.sha1(tenant_id.encode("utf-8")).hexdigest()[:8]
+    candidate = _slugify(f"{org_name}-{tenant_suffix}")
+    if db.query(Organization).filter(Organization.slug == candidate).first() is None:
+        return candidate
+
+    counter = 2
+    while True:
+        deduped_candidate = _slugify(f"{org_name}-{tenant_suffix}-{counter}")
+        if db.query(Organization).filter(Organization.slug == deduped_candidate).first() is None:
+            return deduped_candidate
+        counter += 1
 
 
 def _seed_default_categories(db: Session, organization: Organization) -> None:

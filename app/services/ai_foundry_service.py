@@ -53,6 +53,13 @@ class AIFoundryService:
             )
         return self._openai_client
 
+    @property
+    def chat_enabled(self) -> bool:
+        return self.settings.foundry_enabled
+
+    def get_openai_client(self) -> AzureOpenAI:
+        return self._get_openai_client()
+
     def extract_text_from_document(self, *, filename: str, content_type: str, content: bytes) -> DocumentExtraction:
         suffix = Path(filename).suffix.lower()
         if content_type.startswith("text/") or suffix in {".txt", ".md", ".json", ".csv"}:

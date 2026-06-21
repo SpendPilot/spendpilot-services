@@ -30,8 +30,12 @@ def _get_email_client():
 
 
 def process_email_request(payload: str) -> None:
-    from email_templates import render_email
-    from models import EmailRequest
+    try:
+        from ..email_templates import render_email
+        from ..models import EmailRequest
+    except ImportError:  # pragma: no cover - Azure Functions loads from the project root.
+        from email_templates import render_email
+        from models import EmailRequest
 
     request = EmailRequest.model_validate_json(payload)
     sender_address = os.getenv("ACS_EMAIL_SENDER_ADDRESS", "").strip()

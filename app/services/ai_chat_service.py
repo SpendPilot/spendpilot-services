@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 
 from fastapi import HTTPException, status
@@ -7,12 +8,16 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.core.security import AuthenticatedPrincipal
 from app.models import AIChatMessage, AIChatSession, Expense, RecurringExpense
+from app.services.ai_agent_service import AIAgentService
 from app.services.finance_service import FinanceService
+
+logger = logging.getLogger(__name__)
 
 
 class AIChatService:
     def __init__(self) -> None:
         self.finance_service = FinanceService()
+        self.agent_service = AIAgentService()
 
     def list_sessions(self, db: Session, principal: AuthenticatedPrincipal) -> list[AIChatSession]:
         return (
@@ -36,7 +41,27 @@ class AIChatService:
         )
         db.add(user_message)
         db.flush()
-        reply_text, grounded_context = self._build_grounded_reply(db, principal, message)
+        history = self._build_history(session, message)
+        try:
+            agent_answer = self.agent_service.answer(db, principal, message, history)
+            reply_text = agent_answer.answer or self._build_grounded_reply(db, principal, message)[0]
+            grounded_context = {
+                **agent_answer.grounded_context,
+                "sources": agent_answer.sources,
+                "suggested_followups": agent_answer.suggested_followups,
+                "fallback_used": False,
+            }
+        except Exception as exc:
+            logger.warning("AI agent reply failed, using deterministic fallback: %s", exc)
+            reply_text, grounded_context = self._build_grounded_reply(db, principal, message)
+            grounded_context = {
+                **grounded_context,
+                "sources": [{"label": "Finance dashboard", "type": "tool", "tool_name": "get_finance_dashboard_summary"}],
+                "suggested_followups": [],
+                "used_tools": ["get_finance_dashboard_summary"],
+                "confidence": "medium",
+                "fallback_used": True,
+            }
         reply = AIChatMessage(
             organization_id=principal.organization_id,
             session_id=session.id,
@@ -49,6 +74,11 @@ class AIChatService:
         db.refresh(session)
         db.refresh(reply)
         return session, reply
+
+    def _build_history(self, session: AIChatSession, pending_message: str) -> list[dict[str, str]]:
+        history = [{"role": item.role, "content": item.content} for item in session.messages]
+        history.append({"role": "user", "content": pending_message})
+        return history
 
     def _get_or_create_session(
         self,
