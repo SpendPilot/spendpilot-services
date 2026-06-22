@@ -48,6 +48,7 @@ jobs:
         with:
           projectBaseDir: .
           args: >
+            "-Dsonar.organization=${{ vars.SONAR_ORGANIZATION != '' && vars.SONAR_ORGANIZATION || 'SpendPilot' }}"
             "-Dsonar.projectKey=SpendPilot_spendpilot-services"
             "-Dsonar.projectName=spendpilot-services"
 
